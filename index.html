@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Analyseur GPX & Vent - Météo du Parcours</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    #map { height: 500px; }
+    .wind-arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 18px;
+      line-height: 1;
+      transition: transform 0.3s ease;
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col font-sans">
+
+  <!-- En-tête -->
+  <header class="bg-slate-800 border-b border-slate-700 py-4 px-6 shadow-lg">
+    <div class="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4">
+      <h1 class="text-2xl font-bold text-emerald-400 flex items-center gap-2">
+        <span>🚩</span> GPX Wind Tracker
+      </h1>
+      <p class="text-sm text-slate-400">Analyse de l'exposition au vent le long de votre parcours</p>
+    </div>
+  </header>
+
+  <!-- Contenu Principal -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
+    
+    <!-- Panneau de configuration -->
+    <section class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-md">
+      <form id="config-form" class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+        
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Fichier GPX</label>
+          <input type="file" id="gpx-file" accept=".gpx" required
+            class="block w-full text-sm text-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-500 cursor-pointer bg-slate-900 rounded-lg border border-slate-700" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Date & heure de départ</label>
+          <input type="datetime-local" id="start-time" required
+            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Vitesse moyenne (km/h)</label>
+          <input type="number" id="avg-speed" value="20" min="1" max="100" step="0.5" required
+            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500" />
+        </div>
+
+        <div>
+          <button type="submit" id="btn-submit"
+            class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2 px-4 rounded-lg shadow transition flex items-center justify-center gap-2">
+            <span>Calculer les conditions</span>
+          </button>
+        </div>
+
+      </form>
+    </section>
+
+    <!-- Statut / Message d'erreur -->
+    <div id="status-message" class="hidden p-4 rounded-lg text-sm font-medium"></div>
+
+    <!-- Zone Carte -->
+    <section class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden shadow-md relative">
+      <div id="map"></div>
+      
+      <!-- Légende Carte -->
+      <div class="absolute bottom-4 right-4 bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg text-xs z-[1000] space-y-1 shadow-lg">
+        <div class="font-semibold text-slate-300 mb-1">Impact du vent</div>
+        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-red-500"></span> Vent de face (&lt; 45°)</div>
+        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-orange-500"></span> Vent latéral (45° - 135°)</div>
+        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-emerald-500"></span> Vent de dos (&gt; 135°)</div>
+      </div>
+    </section>
+
+    <!-- Tableau synthétique -->
+    <section id="table-container" class="hidden bg-slate-800 rounded-xl border border-slate-700 p-5 shadow-md space-y-4">
+      <h2 class="text-lg font-bold text-slate-200">Synthèse du parcours par point de contrôle</h2>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm text-slate-300">
+          <thead class="bg-slate-900/70 text-xs uppercase tracking-wider text-slate-400 border-b border-slate-700">
+            <tr>
+              <th class="p-3">Distance</th>
+              <th class="p-3">Heure estimée</th>
+              <th class="p-3">Vent (Moyen / Rafales)</th>
+              <th class="p-3">Orientation</th>
+              <th class="p-3">Impact</th>
+            </tr>
+          </thead>
+          <tbody id="summary-table-body" class="divide-y divide-slate-700/50">
+            <!-- Rempli en JS -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Script JS -->
+  <script>
+    // Initialisation de la date/heure actuelle par défaut
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    document.getElementById('start-time').value = now.toISOString().slice(0, 16);
+
+    // Variables globales Carte
+    const map = L.map('map').setView([46.6, -1.8], 9);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    let layerGroup = L.layerGroup().addTo(map);
+
+    // Formulaire principal
+    document.getElementById('config-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      showStatus("Analyse du fichier GPX et récupération de la météo...", "info");
+
+      const fileInput = document.getElementById('gpx-file');
+      const startTimeVal = document.getElementById('start-time').value;
+      const speedVal = parseFloat(document.getElementById('avg-speed').value);
+
+      if (!fileInput.files.length) {
+        showStatus("Veuillez sélectionner un fichier GPX.", "error");
+        return;
+      }
+
+      try {
+        const file = fileInput.files[0];
+        const gpxText = await file.text();
+        const trackPoints = parseGPX(gpxText);
+
+        if (trackPoints.length < 2) {
+          throw new Error("Le fichier GPX ne contient pas assez de points de trace.");
+        }
+
+        const startTime = new Date(startTimeVal);
+        const processedData = processTrackData(trackPoints, startTime, speedVal);
+
+        // Échantillonnage pour les requêtes météo (tous les 5 km)
+        const checkpoints = sampleCheckpoints(processedData, 5.0);
+
+        // Récupération météo Open-Meteo
+        showStatus(`Interrogation de l'API Open-Meteo pour ${checkpoints.length} points...`, "info");
+        await fetchWeatherData(checkpoints);
+
+        // Affichage sur la carte & tableau
+        renderMapAndTable(processedData, checkpoints);
+        showStatus("Calcul terminé avec succès !", "success");
+
+      } catch (err) {
+        console.error(err);
+        showStatus(`Erreur : ${err.message}`, "error");
+      }
+    });
+
+    // Parseur GPX avec DOMParser
+    function parseGPX(xmlString) {
+      const parser = new DOMParser();
+      const xml = parser.parseFromString(xmlString, "text/xml");
+      const trkpts = Array.from(xml.querySelectorAll("trkpt"));
+
+      return trkpts.map(pt => ({
+        lat: parseFloat(pt.getAttribute("lat")),
+        lon: parseFloat(pt.getAttribute("lon")),
+        ele: parseFloat(pt.querySelector("ele")?.textContent || 0),
+        time: pt.querySelector("time") ? new Date(pt.querySelector("time").textContent) : null
+      }));
+    }
+
+    // Calculs de distances cumulées, caps et horaires
+    function processTrackData(points, startTime, speedKmH) {
+      let cumDistance = 0;
+      const processed = [];
+
+      for (let i = 0; i < points.length; i++) {
+        if (i > 0) {
+          cumDistance += haversineDistance(points[i - 1], points[i]);
+        }
+
+        // Calcul de l'horodatage estimé
+        const hoursElapsed = cumDistance / speedKmH;
+        const estimatedTime = new Date(startTime.getTime() + hoursElapsed * 3600 * 1000);
+
+        // Cap (bearing) vers le point suivant
+        let heading = 0;
+        if (i < points.length - 1) {
+          heading = calculateBearing(points[i], points[i + 1]);
+        } else if (i > 0) {
+          heading = processed[i - 1].heading;
+        }
+
+        processed.push({
+          ...points[i],
+          cumDistance,
+          estimatedTime,
+          heading
+        });
+      }
+
+      return processed;
+    }
+
+    // Échantillonnage tous les X km
+    function sampleCheckpoints(data, intervalKm) {
+      const checkpoints = [];
+      let nextTarget = 0;
+
+      for (const pt of data) {
+        if (pt.cumDistance >= nextTarget || checkpoints.length === 0) {
+          checkpoints.push(pt);
+          nextTarget += intervalKm;
+        }
+      }
+
+      // Toujours inclure le dernier point s'il est éloigné
+      const lastPt = data[data.length - 1];
+      if (checkpoints[checkpoints.length - 1] !== lastPt) {
+        checkpoints.push(lastPt);
+      }
+
+      return checkpoints;
+    }
+
+    // Récupération des données Open-Meteo
+    async function fetchWeatherData(checkpoints) {
+      const fetchPromises = checkpoints.map(async (cp) => {
+        const isoHour = getNearestHourISO(cp.estimatedTime);
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${cp.lat}&longitude=${cp.lon}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=kmh`;
+
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("Erreur de communication avec l'API Météo.");
+        const json = await res.json();
+
+        const timeIdx = json.hourly.time.indexOf(isoHour);
+        if (timeIdx === -1) {
+          throw new Error(`Prévisions météo indisponibles pour la date : ${isoHour}. (Portée max : 7-16 jours).`);
+        }
+
+        cp.windSpeed = json.hourly.wind_speed_10m[timeIdx];
+        cp.windDir = json.hourly.wind_direction_10m[timeIdx];
+        cp.windGusts = json.hourly.wind_gusts_10m[timeIdx];
+        cp.impact = calculateWindImpact(cp.heading, cp.windDir);
+      });
+
+      await Promise.all(fetchPromises);
+    }
+
+    // Rendu Carte et Tableau
+    function renderMapAndTable(fullTrack, checkpoints) {
+      layerGroup.clearLayers();
+
+      // Dessiner les segments colorés sur la carte
+      for (let i = 0; i < fullTrack.length - 1; i++) {
+        const p1 = fullTrack[i];
+        const p2 = fullTrack[i + 1];
+
+        // Associer au checkpoint le plus proche
+        const closestCp = findClosestCheckpoint(p1, checkpoints);
+        
+        L.polyline([[p1.lat, p1.lon], [p2.lat, p2.lon]], {
+          color: closestCp.impact.color,
+          weight: 5,
+          opacity: 0.9
+        }).addTo(layerGroup);
+      }
+
+      // Ajouter les flèches de vent aux checkpoints
+      const tableBody = document.getElementById('summary-table-body');
+      tableBody.innerHTML = '';
+
+      checkpoints.forEach((cp) => {
+        // Flèche sur la carte (L.divIcon)
+        // La direction météorologique indique d'où vient le vent.
+        // On fait pivoter la flèche pour montrer vers où souffle le vent.
+        const arrowAngle = (cp.windDir + 180) % 360;
+        const icon = L.divIcon({
+          className: 'custom-wind-icon',
+          html: `<div class="wind-arrow" style="transform: rotate(${arrowAngle}deg); color: ${cp.impact.color};">⬇</div>`,
+          iconSize: [24, 24]
+        });
+
+        L.marker([cp.lat, cp.lon], { icon }).addTo(layerGroup)
+          .bindPopup(`
+            <div class="text-slate-900 font-sans">
+              <strong>${cp.cumDistance.toFixed(1)} km</strong> (${cp.estimatedTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})})<br/>
+              <b>Vent :</b> ${cp.windSpeed} km/h (Rafales : ${cp.windGusts} km/h)<br/>
+              <b>Orientation :</b> ${cp.windDir}° (${getCardinalDirection(cp.windDir)})<br/>
+              <b>Impact :</b> <span style="color:${cp.impact.color}">${cp.impact.label}</span>
+            </div>
+          `);
+
+        // Remplissage du tableau
+        const row = document.createElement('tr');
+        row.className = 'hover:bg-slate-700/30 transition';
+        row.innerHTML = `
+          <td class="p-3 font-semibold">${cp.cumDistance.toFixed(1)} km</td>
+          <td class="p-3 text-slate-400">${cp.estimatedTime.toLocaleDateString()} ${cp.estimatedTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
+          <td class="p-3">${cp.windSpeed} km/h <span class="text-xs text-slate-400">(raf. ${cp.windGusts} km/h)</span></td>
+          <td class="p-3">${cp.windDir}° (${getCardinalDirection(cp.windDir)})</td>
+          <td class="p-3 font-bold ${cp.impact.textClass}">${cp.impact.label}</td>
+        `;
+        tableBody.appendChild(row);
+      });
+
+      document.getElementById('table-container').classList.remove('hidden');
+
+      // Ajuster le zoom de la carte
+      const bounds = L.latLngBounds(fullTrack.map(p => [p.lat, p.lon]));
+      map.fitBounds(bounds, { padding: [30, 30] });
+    }
+
+    // Fonctions utilitaires Math / Météo
+    function haversineDistance(p1, p2) {
+      const R = 6371;
+      const dLat = (p2.lat - p1.lat) * Math.PI / 180;
+      const dLon = (p2.lon - p1.lon) * Math.PI / 180;
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(p1.lat * Math.PI / 180) * Math.cos(p2.lat * Math.PI / 180) *
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+
+    function calculateBearing(p1, p2) {
+      const dLon = (p2.lon - p1.lon) * Math.PI / 180;
+      const lat1 = p1.lat * Math.PI / 180;
+      const lat2 = p2.lat * Math.PI / 180;
+      const y = Math.sin(dLon) * Math.cos(lat2);
+      const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+      return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+    }
+
+    function calculateWindImpact(heading, windDir) {
+      let diff = Math.abs(windDir - heading);
+      if (diff > 180) diff = 360 - diff;
+
+      if (diff < 45) {
+        return { label: 'Vent de face', color: '#ef4444', textClass: 'text-red-500' };
+      } else if (diff > 135) {
+        return { label: 'Vent de dos', color: '#10b981', textClass: 'text-emerald-500' };
+      } else {
+        return { label: 'Vent latéral', color: '#f97316', textClass: 'text-orange-500' };
+      }
+    }
+
+    function getCardinalDirection(deg) {
+      const dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+      return dirs[Math.round(deg / 22.5) % 16];
+    }
+
+    function getNearestHourISO(date) {
+      const d = new Date(date);
+      if (d.getMinutes() >= 30) d.setHours(d.getHours() + 1);
+      d.setMinutes(0, 0, 0);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:00`;
+    }
+
+    function findClosestCheckpoint(point, checkpoints) {
+      return checkpoints.reduce((prev, curr) => 
+        Math.abs(curr.cumDistance - point.cumDistance) < Math.abs(prev.cumDistance - point.cumDistance) ? curr : prev
+      );
+    }
+
+    function showStatus(msg, type) {
+      const el = document.getElementById('status-message');
+      el.classList.remove('hidden', 'bg-red-900/50', 'text-red-200', 'bg-emerald-900/50', 'text-emerald-200', 'bg-slate-800', 'text-slate-300');
+      
+      if (type === 'error') el.classList.add('bg-red-900/50', 'text-red-200', 'border', 'border-red-700');
+      else if (type === 'success') el.classList.add('bg-emerald-900/50', 'text-emerald-200', 'border', 'border-emerald-700');
+      else el.classList.add('bg-slate-800', 'text-slate-300', 'border', 'border-slate-700');
+
+      el.textContent = msg;
+    }
+  </script>
+</body>
+</html>
