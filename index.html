@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Analyseur GPX & Vent - Météo du Parcours</title>
+  <title>Analyseur GPX, Profil & Vent</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -12,16 +12,25 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+  <!-- Leaflet PolylineDecorator (Flèches de sens de parcours) -->
+  <script src="https://unpkg.com/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylineDecorator.js"></script>
+
+  <!-- Chart.js (Profil altimétrique) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
   <style>
-    #map { height: 500px; }
+    #map { height: 480px; }
     .wind-arrow {
       display: flex;
       align-items: center;
       justify-content: center;
       font-weight: bold;
-      font-size: 18px;
+      font-size: 20px;
       line-height: 1;
-      transition: transform 0.3s ease;
+      text-shadow: 0 0 3px rgba(0,0,0,0.8);
+    }
+    .custom-start-end-icon {
+      white-space: nowrap;
     }
   </style>
 </head>
@@ -31,9 +40,9 @@
   <header class="bg-slate-800 border-b border-slate-700 py-4 px-6 shadow-lg">
     <div class="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4">
       <h1 class="text-2xl font-bold text-emerald-400 flex items-center gap-2">
-        <span>🚩</span> GPX Wind Tracker
+        <span>🚩</span> GPX Wind & Elevation Tracker
       </h1>
-      <p class="text-sm text-slate-400">Analyse de l'exposition au vent le long de votre parcours</p>
+      <p class="text-sm text-slate-400">Analyse du vent, du profil d'altitude et de la trace GPX</p>
     </div>
   </header>
 
@@ -79,12 +88,24 @@
     <section class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden shadow-md relative">
       <div id="map"></div>
       
-      <!-- Légende Carte -->
+      <!-- Légende Carte (Intensité du vent) -->
       <div class="absolute bottom-4 right-4 bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg text-xs z-[1000] space-y-1 shadow-lg">
-        <div class="font-semibold text-slate-300 mb-1">Impact du vent</div>
-        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-red-500"></span> Vent de face (&lt; 45°)</div>
-        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-orange-500"></span> Vent latéral (45° - 135°)</div>
-        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-emerald-500"></span> Vent de dos (&gt; 135°)</div>
+        <div class="font-semibold text-slate-300 mb-1">Vitesse du vent</div>
+        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-blue-500"></span> Faible (&lt; 15 km/h)</div>
+        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-emerald-500"></span> Modéré (15 - 30 km/h)</div>
+        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-amber-500"></span> Soutenu (30 - 45 km/h)</div>
+        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-red-500"></span> Fort (&gt; 45 km/h)</div>
+      </div>
+    </section>
+
+    <!-- Profil Altimétrique -->
+    <section id="chart-container" class="hidden bg-slate-800 rounded-xl border border-slate-700 p-5 shadow-md space-y-3">
+      <div class="flex justify-between items-center">
+        <h2 class="text-lg font-bold text-slate-200">Profil Altimétrique</h2>
+        <span class="text-xs text-slate-400">Survolez le profil pour localiser le point sur la carte</span>
+      </div>
+      <div class="h-48 w-full">
+        <canvas id="elevation-chart"></canvas>
       </div>
     </section>
 
@@ -97,6 +118,7 @@
             <tr>
               <th class="p-3">Distance</th>
               <th class="p-3">Heure estimée</th>
+              <th class="p-3">Altitude</th>
               <th class="p-3">Vent (Moyen / Rafales)</th>
               <th class="p-3">Orientation</th>
               <th class="p-3">Impact</th>
@@ -113,12 +135,12 @@
 
   <!-- Script JS -->
   <script>
-    // Initialisation de la date/heure actuelle par défaut
+    // Initialisation date/heure actuelle
     const now = new Date();
     now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
     document.getElementById('start-time').value = now.toISOString().slice(0, 16);
 
-    // Variables globales Carte
+    // Initialisation Carte
     const map = L.map('map').setView([46.6, -1.8], 9);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
@@ -126,11 +148,13 @@
     }).addTo(map);
 
     let layerGroup = L.layerGroup().addTo(map);
+    let elevationChart = null;
+    let hoverMarker = null;
 
-    // Formulaire principal
+    // Formulaire
     document.getElementById('config-form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      showStatus("Analyse du fichier GPX et récupération de la météo...", "info");
+      showStatus("Analyse du GPX et chargement des données météo...", "info");
 
       const fileInput = document.getElementById('gpx-file');
       const startTimeVal = document.getElementById('start-time').value;
@@ -147,22 +171,21 @@
         const trackPoints = parseGPX(gpxText);
 
         if (trackPoints.length < 2) {
-          throw new Error("Le fichier GPX ne contient pas assez de points de trace.");
+          throw new Error("Le fichier GPX contient trop peu de points.");
         }
 
         const startTime = new Date(startTimeVal);
         const processedData = processTrackData(trackPoints, startTime, speedVal);
-
-        // Échantillonnage pour les requêtes météo (tous les 5 km)
         const checkpoints = sampleCheckpoints(processedData, 5.0);
 
-        // Récupération météo Open-Meteo
-        showStatus(`Interrogation de l'API Open-Meteo pour ${checkpoints.length} points...`, "info");
+        showStatus(`Récupération de la météo pour ${checkpoints.length} points...`, "info");
         await fetchWeatherData(checkpoints);
 
-        // Affichage sur la carte & tableau
-        renderMapAndTable(processedData, checkpoints);
-        showStatus("Calcul terminé avec succès !", "success");
+        renderMap(processedData, checkpoints);
+        renderElevationChart(processedData);
+        renderTable(checkpoints);
+
+        showStatus("Calcul terminé !", "success");
 
       } catch (err) {
         console.error(err);
@@ -170,7 +193,7 @@
       }
     });
 
-    // Parseur GPX avec DOMParser
+    // Parseur GPX
     function parseGPX(xmlString) {
       const parser = new DOMParser();
       const xml = parser.parseFromString(xmlString, "text/xml");
@@ -179,12 +202,11 @@
       return trkpts.map(pt => ({
         lat: parseFloat(pt.getAttribute("lat")),
         lon: parseFloat(pt.getAttribute("lon")),
-        ele: parseFloat(pt.querySelector("ele")?.textContent || 0),
-        time: pt.querySelector("time") ? new Date(pt.querySelector("time").textContent) : null
+        ele: parseFloat(pt.querySelector("ele")?.textContent || 0)
       }));
     }
 
-    // Calculs de distances cumulées, caps et horaires
+    // Traitement trajectoire
     function processTrackData(points, startTime, speedKmH) {
       let cumDistance = 0;
       const processed = [];
@@ -194,11 +216,9 @@
           cumDistance += haversineDistance(points[i - 1], points[i]);
         }
 
-        // Calcul de l'horodatage estimé
         const hoursElapsed = cumDistance / speedKmH;
         const estimatedTime = new Date(startTime.getTime() + hoursElapsed * 3600 * 1000);
 
-        // Cap (bearing) vers le point suivant
         let heading = 0;
         if (i < points.length - 1) {
           heading = calculateBearing(points[i], points[i + 1]);
@@ -217,7 +237,6 @@
       return processed;
     }
 
-    // Échantillonnage tous les X km
     function sampleCheckpoints(data, intervalKm) {
       const checkpoints = [];
       let nextTarget = 0;
@@ -229,7 +248,6 @@
         }
       }
 
-      // Toujours inclure le dernier point s'il est éloigné
       const lastPt = data[data.length - 1];
       if (checkpoints[checkpoints.length - 1] !== lastPt) {
         checkpoints.push(lastPt);
@@ -238,95 +256,211 @@
       return checkpoints;
     }
 
-    // Récupération des données Open-Meteo
+    // API Open-Meteo
     async function fetchWeatherData(checkpoints) {
       const fetchPromises = checkpoints.map(async (cp) => {
         const isoHour = getNearestHourISO(cp.estimatedTime);
         const url = `https://api.open-meteo.com/v1/forecast?latitude=${cp.lat}&longitude=${cp.lon}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=kmh`;
 
         const res = await fetch(url);
-        if (!res.ok) throw new Error("Erreur de communication avec l'API Météo.");
+        if (!res.ok) throw new Error("Erreur avec l'API Météo.");
         const json = await res.json();
 
         const timeIdx = json.hourly.time.indexOf(isoHour);
         if (timeIdx === -1) {
-          throw new Error(`Prévisions météo indisponibles pour la date : ${isoHour}. (Portée max : 7-16 jours).`);
+          throw new Error(`Prévisions météo indisponibles pour la date : ${isoHour}.`);
         }
 
         cp.windSpeed = json.hourly.wind_speed_10m[timeIdx];
         cp.windDir = json.hourly.wind_direction_10m[timeIdx];
         cp.windGusts = json.hourly.wind_gusts_10m[timeIdx];
         cp.impact = calculateWindImpact(cp.heading, cp.windDir);
+        cp.speedColor = getWindSpeedColor(cp.windSpeed);
       });
 
       await Promise.all(fetchPromises);
     }
 
-    // Rendu Carte et Tableau
-    function renderMapAndTable(fullTrack, checkpoints) {
+    // Affichage Carte
+    function renderMap(fullTrack, checkpoints) {
       layerGroup.clearLayers();
-
-      // Dessiner les segments colorés sur la carte
-      for (let i = 0; i < fullTrack.length - 1; i++) {
-        const p1 = fullTrack[i];
-        const p2 = fullTrack[i + 1];
-
-        // Associer au checkpoint le plus proche
-        const closestCp = findClosestCheckpoint(p1, checkpoints);
-        
-        L.polyline([[p1.lat, p1.lon], [p2.lat, p2.lon]], {
-          color: closestCp.impact.color,
-          weight: 5,
-          opacity: 0.9
-        }).addTo(layerGroup);
+      if (hoverMarker) {
+        hoverMarker.remove();
+        hoverMarker = null;
       }
 
-      // Ajouter les flèches de vent aux checkpoints
-      const tableBody = document.getElementById('summary-table-body');
-      tableBody.innerHTML = '';
+      // Tracé principal GPX
+      const latLngs = fullTrack.map(p => [p.lat, p.lon]);
+      const trackPolyline = L.polyline(latLngs, {
+        color: '#38bdf8',
+        weight: 4,
+        opacity: 0.9
+      }).addTo(layerGroup);
 
+      // Flèches d'orientation du parcours
+      L.polylineDecorator(trackPolyline, {
+        patterns: [{
+          offset: '3%',
+          repeat: '8%',
+          symbol: L.Symbol.arrowHead({
+            pixelSize: 9,
+            polygon: false,
+            pathOptions: { stroke: true, color: '#0284c7', weight: 2 }
+          })
+        }]
+      }).addTo(layerGroup);
+
+      // Marqueur Départ
+      const startPt = fullTrack[0];
+      L.marker([startPt.lat, startPt.lon], {
+        icon: L.divIcon({
+          className: 'custom-start-end-icon',
+          html: '<div class="bg-emerald-500 text-white font-bold text-xs px-2 py-1 rounded-full shadow-lg border-2 border-white">🟢 DÉPART</div>',
+          iconSize: [80, 26],
+          iconAnchor: [40, 13]
+        })
+      }).addTo(layerGroup);
+
+      // Marqueur Arrivée
+      const endPt = fullTrack[fullTrack.length - 1];
+      L.marker([endPt.lat, endPt.lon], {
+        icon: L.divIcon({
+          className: 'custom-start-end-icon',
+          html: '<div class="bg-red-500 text-white font-bold text-xs px-2 py-1 rounded-full shadow-lg border-2 border-white">🏁 ARRIVÉE</div>',
+          iconSize: [80, 26],
+          iconAnchor: [40, 13]
+        })
+      }).addTo(layerGroup);
+
+      // Flèches de vent sur la carte (couleur selon l'intensité)
       checkpoints.forEach((cp) => {
-        // Flèche sur la carte (L.divIcon)
-        // La direction météorologique indique d'où vient le vent.
-        // On fait pivoter la flèche pour montrer vers où souffle le vent.
         const arrowAngle = (cp.windDir + 180) % 360;
         const icon = L.divIcon({
           className: 'custom-wind-icon',
-          html: `<div class="wind-arrow" style="transform: rotate(${arrowAngle}deg); color: ${cp.impact.color};">⬇</div>`,
-          iconSize: [24, 24]
+          html: `<div class="wind-arrow" style="transform: rotate(${arrowAngle}deg); color: ${cp.speedColor.color};">⬇</div>`,
+          iconSize: [26, 26]
         });
 
         L.marker([cp.lat, cp.lon], { icon }).addTo(layerGroup)
           .bindPopup(`
             <div class="text-slate-900 font-sans">
               <strong>${cp.cumDistance.toFixed(1)} km</strong> (${cp.estimatedTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})})<br/>
-              <b>Vent :</b> ${cp.windSpeed} km/h (Rafales : ${cp.windGusts} km/h)<br/>
+              <b>Altitude :</b> ${Math.round(cp.ele)} m<br/>
+              <b>Vent :</b> <span style="color:${cp.speedColor.color}; font-weight:bold;">${cp.windSpeed} km/h</span> (Rafales : ${cp.windGusts} km/h)<br/>
               <b>Orientation :</b> ${cp.windDir}° (${getCardinalDirection(cp.windDir)})<br/>
-              <b>Impact :</b> <span style="color:${cp.impact.color}">${cp.impact.label}</span>
+              <b>Impact :</b> ${cp.impact.label}
             </div>
           `);
+      });
 
-        // Remplissage du tableau
+      map.fitBounds(trackPolyline.getBounds(), { padding: [35, 35] });
+    }
+
+    // Graphique Altimétrique Interactif
+    function renderElevationChart(fullTrack) {
+      document.getElementById('chart-container').classList.remove('hidden');
+      const ctx = document.getElementById('elevation-chart').getContext('2d');
+
+      const labels = fullTrack.map(p => p.cumDistance.toFixed(1));
+      const elevations = fullTrack.map(p => Math.round(p.ele));
+
+      if (elevationChart) {
+        elevationChart.destroy();
+      }
+
+      elevationChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Altitude (m)',
+            data: elevations,
+            borderColor: '#10b981',
+            backgroundColor: 'rgba(16, 185, 129, 0.15)',
+            fill: true,
+            tension: 0.15,
+            pointRadius: 0,
+            pointHoverRadius: 6,
+            pointHoverBackgroundColor: '#38bdf8'
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                title: (items) => `Distance : ${items[0].label} km`,
+                label: (item) => `Altitude : ${item.raw} m`
+              }
+            }
+          },
+          onHover: (event, activeElements) => {
+            if (activeElements.length > 0) {
+              const idx = activeElements[0].index;
+              const pt = fullTrack[idx];
+
+              if (!hoverMarker) {
+                hoverMarker = L.circleMarker([pt.lat, pt.lon], {
+                  radius: 7,
+                  color: '#ffffff',
+                  fillColor: '#38bdf8',
+                  fillOpacity: 1,
+                  weight: 3
+                }).addTo(map);
+              } else {
+                hoverMarker.setLatLng([pt.lat, pt.lon]);
+              }
+            }
+          },
+          scales: {
+            x: {
+              title: { display: true, text: 'Distance (km)', color: '#94a3b8' },
+              ticks: { color: '#94a3b8', maxTicksLimit: 12 },
+              grid: { color: '#334155' }
+            },
+            y: {
+              title: { display: true, text: 'Altitude (m)', color: '#94a3b8' },
+              ticks: { color: '#94a3b8' },
+              grid: { color: '#334155' }
+            }
+          }
+        }
+      });
+    }
+
+    // Affichage Tableau
+    function renderTable(checkpoints) {
+      const tableBody = document.getElementById('summary-table-body');
+      tableBody.innerHTML = '';
+
+      checkpoints.forEach((cp) => {
         const row = document.createElement('tr');
         row.className = 'hover:bg-slate-700/30 transition';
         row.innerHTML = `
           <td class="p-3 font-semibold">${cp.cumDistance.toFixed(1)} km</td>
           <td class="p-3 text-slate-400">${cp.estimatedTime.toLocaleDateString()} ${cp.estimatedTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
-          <td class="p-3">${cp.windSpeed} km/h <span class="text-xs text-slate-400">(raf. ${cp.windGusts} km/h)</span></td>
+          <td class="p-3 font-medium">${Math.round(cp.ele)} m</td>
+          <td class="p-3 font-bold" style="color: ${cp.speedColor.color}">${cp.windSpeed} km/h <span class="text-xs text-slate-400 font-normal">(raf. ${cp.windGusts} km/h)</span></td>
           <td class="p-3">${cp.windDir}° (${getCardinalDirection(cp.windDir)})</td>
-          <td class="p-3 font-bold ${cp.impact.textClass}">${cp.impact.label}</td>
+          <td class="p-3 font-semibold">${cp.impact.label}</td>
         `;
         tableBody.appendChild(row);
       });
 
       document.getElementById('table-container').classList.remove('hidden');
-
-      // Ajuster le zoom de la carte
-      const bounds = L.latLngBounds(fullTrack.map(p => [p.lat, p.lon]));
-      map.fitBounds(bounds, { padding: [30, 30] });
     }
 
-    // Fonctions utilitaires Math / Météo
+    // Calculs & Utilitaires
+    function getWindSpeedColor(speed) {
+      if (speed < 15) return { color: '#3b82f6', label: 'Faible' };
+      if (speed < 30) return { color: '#10b981', label: 'Modéré' };
+      if (speed < 45) return { color: '#f59e0b', label: 'Soutenu' };
+      return { color: '#ef4444', label: 'Fort' };
+    }
+
     function haversineDistance(p1, p2) {
       const R = 6371;
       const dLat = (p2.lat - p1.lat) * Math.PI / 180;
@@ -350,13 +484,9 @@
       let diff = Math.abs(windDir - heading);
       if (diff > 180) diff = 360 - diff;
 
-      if (diff < 45) {
-        return { label: 'Vent de face', color: '#ef4444', textClass: 'text-red-500' };
-      } else if (diff > 135) {
-        return { label: 'Vent de dos', color: '#10b981', textClass: 'text-emerald-500' };
-      } else {
-        return { label: 'Vent latéral', color: '#f97316', textClass: 'text-orange-500' };
-      }
+      if (diff < 45) return { label: 'Vent de face' };
+      if (diff > 135) return { label: 'Vent de dos' };
+      return { label: 'Vent latéral' };
     }
 
     function getCardinalDirection(deg) {
@@ -369,12 +499,6 @@
       if (d.getMinutes() >= 30) d.setHours(d.getHours() + 1);
       d.setMinutes(0, 0, 0);
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:00`;
-    }
-
-    function findClosestCheckpoint(point, checkpoints) {
-      return checkpoints.reduce((prev, curr) => 
-        Math.abs(curr.cumDistance - point.cumDistance) < Math.abs(prev.cumDistance - point.cumDistance) ? curr : prev
-      );
     }
 
     function showStatus(msg, type) {
