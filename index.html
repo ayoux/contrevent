@@ -1,703 +1,654 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" class="h-full bg-slate-900 text-slate-100">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Analyseur GPX, Météo & Vitesse Ajustée</title>
-  
-  <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  
-  <!-- Leaflet CSS & JS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-  <!-- Leaflet PolylineDecorator (Flèches de sens de parcours) -->
-  <script src="https://unpkg.com/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylineDecorator.js"></script>
-
-  <!-- Chart.js (Profil altimétrique) -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
-  <style>
-    #map { height: 480px; }
-    .wind-arrow {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: bold;
-      font-size: 20px;
-      line-height: 1;
-      text-shadow: 0 0 3px rgba(0,0,0,0.8);
-    }
-    .custom-start-end-icon { white-space: nowrap; }
-  </style>
-</head>
-<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col font-sans">
-
-  <!-- En-tête -->
-  <header class="bg-slate-800 border-b border-slate-700 py-4 px-6 shadow-lg">
-    <div class="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4">
-      <h1 class="text-2xl font-bold text-emerald-400 flex items-center gap-2">
-        <span>🚩</span> GPX Wind & Speed Optimizer
-      </h1>
-      <p class="text-sm text-slate-400">Analyse du vent, vitesse ajustée & conditions météo globales</p>
-    </div>
-  </header>
-
-  <!-- Contenu Principal -->
-  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPX Wind & Elevation Tracker</title>
     
-    <!-- Panneau de configuration -->
-    <section class="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-md">
-      <form id="config-form" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Chart.js pour le profil d'élévation -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- FontAwesome pour les icônes -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+
+    <style>
+        /* Personnalisation de la scrollbar et carte */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        .leaflet-container { background-color: #0f172a !important; }
         
-        <div>
-          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Fichier GPX</label>
-          <input type="file" id="gpx-file" accept=".gpx" required
-            class="block w-full text-sm text-slate-300 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-500 cursor-pointer bg-slate-900 rounded-lg border border-slate-700" />
-        </div>
-
-        <div>
-          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Départ</label>
-          <input type="datetime-local" id="start-time" required
-            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500" />
-        </div>
-
-        <div>
-          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Vitesse cible (km/h)</label>
-          <input type="number" id="avg-speed" value="25" min="1" max="120" step="0.5" required
-            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500" />
-        </div>
-
-        <div>
-          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Intervalle (km)</label>
-          <input type="number" id="interval-km" value="5" min="0.5" max="50" step="0.5" required
-            class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500" />
-        </div>
-
-        <div>
-          <button type="submit" id="btn-submit"
-            class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2 px-4 rounded-lg shadow transition flex items-center justify-center gap-2">
-            <span>Calculer</span>
-          </button>
-        </div>
-
-      </form>
-    </section>
-
-    <!-- Statut / Messages -->
-    <div id="status-message" class="hidden p-4 rounded-lg text-sm font-medium"></div>
-
-    <!-- Encart Synthèse Météo & Impact Global -->
-    <section id="weather-summary" class="hidden bg-slate-800 rounded-xl border border-slate-700 p-5 shadow-md">
-      <h2 class="text-base font-bold text-slate-200 mb-4 flex items-center gap-2">
-        <span>🌤️</span> Conditions Météo Attendues & Impact global
-      </h2>
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-        <div class="bg-slate-900/60 p-3 rounded-lg border border-slate-700/50">
-          <div class="text-xs text-slate-400 uppercase">Vent moyen / Rafales</div>
-          <div id="summary-wind" class="text-lg font-bold text-slate-100 mt-1">-</div>
-        </div>
-        <div class="bg-slate-900/60 p-3 rounded-lg border border-slate-700/50">
-          <div class="text-xs text-slate-400 uppercase">Température / Météo</div>
-          <div id="summary-temp" class="text-lg font-bold text-slate-100 mt-1">-</div>
-        </div>
-        <div class="bg-slate-900/60 p-3 rounded-lg border border-slate-700/50">
-          <div class="text-xs text-slate-400 uppercase">Durée estimée vs Ajustée</div>
-          <div id="summary-time" class="text-lg font-bold text-slate-100 mt-1">-</div>
-        </div>
-        <div class="bg-slate-900/60 p-3 rounded-lg border border-slate-700/50">
-          <div class="text-xs text-slate-400 uppercase">Vitesse moyenne réelle</div>
-          <div id="summary-speed" class="text-lg font-bold mt-1">-</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Zone Carte -->
-    <section class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden shadow-md relative">
-      <div id="map"></div>
-      
-      <!-- Légende Carte -->
-      <div class="absolute bottom-4 right-4 bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg text-xs z-[1000] space-y-1 shadow-lg">
-        <div class="font-semibold text-slate-300 mb-1">Vitesse du vent</div>
-        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-blue-500"></span> Faible (&lt; 15 km/h)</div>
-        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-emerald-500"></span> Modéré (15 - 30 km/h)</div>
-        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-amber-500"></span> Soutenu (30 - 45 km/h)</div>
-        <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-red-500"></span> Fort (&gt; 45 km/h)</div>
-      </div>
-    </section>
-
-    <!-- Profil Altimétrique avec Vent Intégré -->
-    <section id="chart-container" class="hidden bg-slate-800 rounded-xl border border-slate-700 p-5 shadow-md space-y-3">
-      <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
-        <div>
-          <h2 class="text-lg font-bold text-slate-200">Profil Altimétrique & Orientation du Vent</h2>
-          <p class="text-xs text-slate-400">Flèche = direction relative du vent (⬅️ Face, ➡️ Dos, ⬇️ Latéral)</p>
-        </div>
-        <div class="flex items-center gap-3 text-xs bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-700">
-          <span class="flex items-center gap-1 text-emerald-400">➡️ Vent Dos</span>
-          <span class="flex items-center gap-1 text-red-400">⬅️ Vent Face</span>
-          <span class="flex items-center gap-1 text-amber-400">⬇️ Vent Latéral</span>
-        </div>
-      </div>
-      <div class="h-60 w-full">
-        <canvas id="elevation-chart"></canvas>
-      </div>
-    </section>
-
-    <!-- Tableau synthétique -->
-    <section id="table-container" class="hidden bg-slate-800 rounded-xl border border-slate-700 p-5 shadow-md space-y-4">
-      <div class="flex justify-between items-center">
-        <h2 class="text-lg font-bold text-slate-200">Synthèse du parcours par point de contrôle</h2>
-        <span id="table-interval-badge" class="text-xs bg-slate-700 px-3 py-1 rounded-full text-slate-300"></span>
-      </div>
-      <div class="overflow-x-auto">
-        <table class="w-full text-left text-sm text-slate-300">
-          <thead class="bg-slate-900/70 text-xs uppercase tracking-wider text-slate-400 border-b border-slate-700">
-            <tr>
-              <th class="p-3">Distance</th>
-              <th class="p-3">Heure estimée</th>
-              <th class="p-3">Altitude</th>
-              <th class="p-3">Vent (Moyen / Rafales)</th>
-              <th class="p-3">Orientation</th>
-              <th class="p-3">Impact Vent</th>
-              <th class="p-3">Vitesse ajustée</th>
-            </tr>
-          </thead>
-          <tbody id="summary-table-body" class="divide-y divide-slate-700/50">
-            <!-- Rempli en JS -->
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-  </main>
-
-  <!-- Script JS -->
-  <script>
-    // Initialisation date/heure
-    const now = new Date();
-    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-    document.getElementById('start-time').value = now.toISOString().slice(0, 16);
-
-    // Initialisation Carte
-    const map = L.map('map').setView([46.6, -1.8], 9);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '© OpenStreetMap'
-    }).addTo(map);
-
-    let layerGroup = L.layerGroup().addTo(map);
-    let elevationChart = null;
-    let hoverMarker = null;
-
-    // Formulaire principal
-    document.getElementById('config-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      showStatus("Analyse du fichier GPX et calcul des données météo...", "info");
-
-      const fileInput = document.getElementById('gpx-file');
-      const startTimeVal = document.getElementById('start-time').value;
-      const speedVal = parseFloat(document.getElementById('avg-speed').value);
-      const intervalKm = parseFloat(document.getElementById('interval-km').value) || 5.0;
-
-      if (!fileInput.files.length) {
-        showStatus("Veuillez sélectionner un fichier GPX.", "error");
-        return;
-      }
-
-      try {
-        const file = fileInput.files[0];
-        const gpxText = await file.text();
-        const trackPoints = parseGPX(gpxText);
-
-        if (trackPoints.length < 2) {
-          throw new Error("Le fichier GPX ne contient pas assez de points.");
+        /* Animation pour le marqueur de survol */
+        .hover-point {
+            width: 14px;
+            height: 14px;
+            background-color: #38bdf8;
+            border: 3px solid #ffffff;
+            border-radius: 50%;
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.8);
         }
+    </style>
+</head>
+<body class="h-full flex flex-col font-sans overflow-hidden">
 
-        const startTime = new Date(startTimeVal);
-        const processedData = processTrackData(trackPoints, startTime, speedVal);
-        const checkpoints = sampleCheckpoints(processedData, intervalKm);
-
-        showStatus(`Récupération de la météo pour ${checkpoints.length} points de contrôle...`, "info");
-        await fetchWeatherData(checkpoints, speedVal);
-
-        renderWeatherSummary(checkpoints, processedData, speedVal);
-        renderMap(processedData, checkpoints);
-        renderElevationChart(processedData, checkpoints);
-        renderTable(checkpoints, intervalKm, speedVal);
-
-        showStatus("Calcul des conditions et des vitesses ajustées terminé !", "success");
-
-      } catch (err) {
-        console.error(err);
-        showStatus(`Erreur : ${err.message}`, "error");
-      }
-    });
-
-    // Parseur GPX
-    function parseGPX(xmlString) {
-      const parser = new DOMParser();
-      const xml = parser.parseFromString(xmlString, "text/xml");
-      const trkpts = Array.from(xml.querySelectorAll("trkpt"));
-
-      return trkpts.map(pt => ({
-        lat: parseFloat(pt.getAttribute("lat")),
-        lon: parseFloat(pt.getAttribute("lon")),
-        ele: parseFloat(pt.querySelector("ele")?.textContent || 0)
-      }));
-    }
-
-    // Traitement trajectoire
-    function processTrackData(points, startTime, speedKmH) {
-      let cumDistance = 0;
-      const processed = [];
-
-      for (let i = 0; i < points.length; i++) {
-        if (i > 0) {
-          cumDistance += haversineDistance(points[i - 1], points[i]);
-        }
-
-        const hoursElapsed = cumDistance / speedKmH;
-        const estimatedTime = new Date(startTime.getTime() + hoursElapsed * 3600 * 1000);
-
-        let heading = 0;
-        if (i < points.length - 1) {
-          heading = calculateBearing(points[i], points[i + 1]);
-        } else if (i > 0) {
-          heading = processed[i - 1].heading;
-        }
-
-        processed.push({
-          ...points[i],
-          cumDistance,
-          estimatedTime,
-          heading
-        });
-      }
-
-      return processed;
-    }
-
-    function sampleCheckpoints(data, intervalKm) {
-      const checkpoints = [];
-      let nextTarget = 0;
-
-      for (const pt of data) {
-        if (pt.cumDistance >= nextTarget || checkpoints.length === 0) {
-          checkpoints.push(pt);
-          nextTarget += intervalKm;
-        }
-      }
-
-      const lastPt = data[data.length - 1];
-      if (checkpoints[checkpoints.length - 1] !== lastPt) {
-        checkpoints.push(lastPt);
-      }
-
-      return checkpoints;
-    }
-
-    // Récupération Météo & Calcul de Vitesse Ajustée
-    async function fetchWeatherData(checkpoints, baseSpeed) {
-      const fetchPromises = checkpoints.map(async (cp) => {
-        const isoHour = getNearestHourISO(cp.estimatedTime);
-        const url = `https://api.open-meteo.com/v1/forecast?latitude=${cp.lat}&longitude=${cp.lon}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m,temperature_2m,precipitation,weather_code&wind_speed_unit=kmh`;
-
-        const res = await fetch(url);
-        if (!res.ok) throw new Error("Erreur avec l'API Météo.");
-        const json = await res.json();
-
-        const timeIdx = json.hourly.time.indexOf(isoHour);
-        if (timeIdx === -1) {
-          throw new Error(`Prévisions météo indisponibles pour la date : ${isoHour}.`);
-        }
-
-        cp.windSpeed = json.hourly.wind_speed_10m[timeIdx];
-        cp.windDir = json.hourly.wind_direction_10m[timeIdx];
-        cp.windGusts = json.hourly.wind_gusts_10m[timeIdx];
-        cp.temperature = json.hourly.temperature_2m[timeIdx];
-        cp.precipitation = json.hourly.precipitation[timeIdx];
-        cp.weatherCode = json.hourly.weather_code[timeIdx];
-
-        cp.impact = calculateWindImpact(cp.heading, cp.windDir);
-        cp.speedColor = getWindSpeedColor(cp.windSpeed);
-
-        // Modèle d'impact sur la vitesse
-        const rad = (cp.windDir - cp.heading) * Math.PI / 180;
-        const headwindComp = cp.windSpeed * Math.cos(rad);
-        const adjusted = baseSpeed - (0.35 * headwindComp);
-        cp.adjustedSpeed = Math.max(5, Math.round(adjusted * 10) / 10);
-      });
-
-      await Promise.all(fetchPromises);
-    }
-
-    // Rendu Encart Météo Globale
-    function renderWeatherSummary(checkpoints, fullTrack, baseSpeed) {
-      document.getElementById('weather-summary').classList.remove('hidden');
-
-      const winds = checkpoints.map(c => c.windSpeed);
-      const gusts = checkpoints.map(c => c.windGusts);
-      const temps = checkpoints.map(c => c.temperature);
-      
-      const avgWind = Math.round(winds.reduce((a, b) => a + b, 0) / winds.length);
-      const maxGust = Math.max(...gusts);
-      const minTemp = Math.round(Math.min(...temps));
-      const maxTemp = Math.round(Math.max(...temps));
-
-      const totalDist = fullTrack[fullTrack.length - 1].cumDistance;
-      const initialHours = totalDist / baseSpeed;
-
-      let adjustedHours = 0;
-      for (let i = 0; i < checkpoints.length - 1; i++) {
-        const segDist = checkpoints[i + 1].cumDistance - checkpoints[i].cumDistance;
-        const segSpeed = checkpoints[i].adjustedSpeed;
-        adjustedHours += segDist / segSpeed;
-      }
-      const avgAdjustedSpeed = Math.round((totalDist / adjustedHours) * 10) / 10;
-
-      const formatDuration = (h) => {
-        const hrs = Math.floor(h);
-        const mins = Math.round((h - hrs) * 60);
-        return `${hrs}h${mins < 10 ? '0' : ''}${mins}`;
-      };
-
-      const diffMins = Math.round((adjustedHours - initialHours) * 60);
-      const diffText = diffMins > 0 ? `(+${diffMins} min)` : diffMins < 0 ? `(${diffMins} min)` : '(égal)';
-
-      document.getElementById('summary-wind').textContent = `${avgWind} km/h (Max ${maxGust} km/h)`;
-      document.getElementById('summary-temp').textContent = `${minTemp}°C à ${maxTemp}°C`;
-      document.getElementById('summary-time').textContent = `${formatDuration(initialHours)} ➔ ${formatDuration(adjustedHours)} ${diffText}`;
-      
-      const speedEl = document.getElementById('summary-speed');
-      speedEl.textContent = `${avgAdjustedSpeed} km/h (base: ${baseSpeed})`;
-      speedEl.className = `text-lg font-bold mt-1 ${avgAdjustedSpeed < baseSpeed ? 'text-red-400' : 'text-emerald-400'}`;
-    }
-
-    // Affichage Carte
-    function renderMap(fullTrack, checkpoints) {
-      layerGroup.clearLayers();
-      if (hoverMarker) {
-        hoverMarker.remove();
-        hoverMarker = null;
-      }
-
-      const latLngs = fullTrack.map(p => [p.lat, p.lon]);
-      const trackPolyline = L.polyline(latLngs, {
-        color: '#38bdf8',
-        weight: 4,
-        opacity: 0.9
-      }).addTo(layerGroup);
-
-      L.polylineDecorator(trackPolyline, {
-        patterns: [{
-          offset: '3%',
-          repeat: '8%',
-          symbol: L.Symbol.arrowHead({
-            pixelSize: 9,
-            polygon: false,
-            pathOptions: { stroke: true, color: '#0284c7', weight: 2 }
-          })
-        }]
-      }).addTo(layerGroup);
-
-      // Départ
-      const startPt = fullTrack[0];
-      L.marker([startPt.lat, startPt.lon], {
-        icon: L.divIcon({
-          className: 'custom-start-end-icon',
-          html: '<div class="bg-emerald-500 text-white font-bold text-xs px-2 py-1 rounded-full shadow-lg border-2 border-white">🟢 DÉPART</div>',
-          iconSize: [80, 26],
-          iconAnchor: [40, 13]
-        })
-      }).addTo(layerGroup);
-
-      // Arrivée
-      const endPt = fullTrack[fullTrack.length - 1];
-      L.marker([endPt.lat, endPt.lon], {
-        icon: L.divIcon({
-          className: 'custom-start-end-icon',
-          html: '<div class="bg-red-500 text-white font-bold text-xs px-2 py-1 rounded-full shadow-lg border-2 border-white">🏁 ARRIVÉE</div>',
-          iconSize: [80, 26],
-          iconAnchor: [40, 13]
-        })
-      }).addTo(layerGroup);
-
-      // Marqueurs vent
-      checkpoints.forEach((cp) => {
-        const arrowAngle = (cp.windDir + 180) % 360;
-        const icon = L.divIcon({
-          className: 'custom-wind-icon',
-          html: `<div class="wind-arrow" style="transform: rotate(${arrowAngle}deg); color: ${cp.speedColor.color};">⬇</div>`,
-          iconSize: [26, 26]
-        });
-
-        L.marker([cp.lat, cp.lon], { icon }).addTo(layerGroup)
-          .bindPopup(`
-            <div class="text-slate-900 font-sans">
-              <strong>${cp.cumDistance.toFixed(1)} km</strong> (${cp.estimatedTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})})<br/>
-              <b>Altitude :</b> ${Math.round(cp.ele)} m<br/>
-              <b>Vent :</b> <span style="color:${cp.speedColor.color}; font-weight:bold;">${cp.windSpeed} km/h</span> (Rafales: ${cp.windGusts} km/h)<br/>
-              <b>Vitesse ajustée :</b> <strong>${cp.adjustedSpeed} km/h</strong><br/>
-              <b>Impact :</b> ${cp.impact.label}
+    <!-- En-tête -->
+    <header class="bg-slate-800 border-b border-slate-700 px-6 py-3 flex items-center justify-between shrink-0 shadow-lg">
+        <div class="flex items-center space-x-3">
+            <div class="p-2 bg-blue-600 rounded-lg text-white">
+                <i class="fa-solid fa-wind text-xl"></i>
             </div>
-          `);
-      });
+            <div>
+                <h1 class="font-bold text-lg text-white leading-tight">GPX Wind & Elevation Tracker</h1>
+                <p class="text-xs text-slate-400">Analyse du vent et profil altimétrique de vos parcours</p>
+            </div>
+        </div>
+        
+        <!-- Sélection de fichier GPX -->
+        <div class="flex items-center space-x-3">
+            <label for="gpx-file" class="cursor-pointer bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors flex items-center space-x-2 shadow-sm">
+                <i class="fa-solid fa-file-upload"></i>
+                <span>Importer un fichier GPX</span>
+            </label>
+            <input type="file" id="gpx-file" accept=".gpx" class="hidden">
+        </div>
+    </header>
 
-      map.fitBounds(trackPolyline.getBounds(), { padding: [35, 35] });
-    }
+    <!-- Zone Principale -->
+    <div class="flex-1 flex overflow-hidden">
+        
+        <!-- Panneau latéral : Métriques et Informations -->
+        <aside class="w-80 bg-slate-800/90 border-r border-slate-700 p-5 flex flex-col justify-between overflow-y-auto shrink-0">
+            <div class="space-y-6">
+                
+                <!-- Zone d'information / statut -->
+                <div id="status-card" class="bg-slate-900/60 rounded-xl p-4 border border-slate-700/60 text-center">
+                    <i class="fa-solid fa-route text-3xl text-slate-500 mb-2"></i>
+                    <p class="text-sm text-slate-400">Veuillez charger une trace GPX pour débuter l'analyse.</p>
+                </div>
 
-    // Graphique Altimétrique avec Overlay Vent Intégré
-    function renderElevationChart(fullTrack, checkpoints) {
-      document.getElementById('chart-container').classList.remove('hidden');
-      const ctx = document.getElementById('elevation-chart').getContext('2d');
+                <!-- Métriques clés -->
+                <div id="stats-container" class="hidden space-y-4">
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Résumé du Parcours</h2>
+                    
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="bg-slate-900/80 p-3 rounded-lg border border-slate-700">
+                            <span class="text-xs text-slate-400 flex items-center gap-1">
+                                <i class="fa-solid fa-ruler-horizontal text-blue-400"></i> Distance
+                            </span>
+                            <p class="text-xl font-bold mt-1 text-white"><span id="val-distance">0</span> <span class="text-xs font-normal text-slate-400">km</span></p>
+                        </div>
+                        <div class="bg-slate-900/80 p-3 rounded-lg border border-slate-700">
+                            <span class="text-xs text-slate-400 flex items-center gap-1">
+                                <i class="fa-solid fa-mountain text-emerald-400"></i> Dénivelé +
+                            </span>
+                            <p class="text-xl font-bold mt-1 text-white"><span id="val-ele-gain">0</span> <span class="text-xs font-normal text-slate-400">m</span></p>
+                        </div>
+                        <div class="bg-slate-900/80 p-3 rounded-lg border border-slate-700">
+                            <span class="text-xs text-slate-400 flex items-center gap-1">
+                                <i class="fa-solid fa-arrow-down-short-wide text-amber-400"></i> Dénivelé -
+                            </span>
+                            <p class="text-xl font-bold mt-1 text-white"><span id="val-ele-loss">0</span> <span class="text-xs font-normal text-slate-400">m</span></p>
+                        </div>
+                        <div class="bg-slate-900/80 p-3 rounded-lg border border-slate-700">
+                            <span class="text-xs text-slate-400 flex items-center gap-1">
+                                <i class="fa-solid fa-stopwatch text-purple-400"></i> Durée estimée
+                            </span>
+                            <p class="text-lg font-bold mt-1 text-white" id="val-duration">--:--</p>
+                        </div>
+                    </div>
 
-      const labels = fullTrack.map(p => p.cumDistance.toFixed(1));
-      const elevations = fullTrack.map(p => Math.round(p.ele));
+                    <!-- Synthèse Météo & Vent -->
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400 pt-2">Impact Météo & Vent</h2>
+                    
+                    <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-700 space-y-3">
+                        <div class="flex justify-between items-center text-sm">
+                            <span class="text-slate-400 flex items-center gap-2">
+                                <i class="fa-solid fa-wind text-cyan-400"></i> Vent moyen
+                            </span>
+                            <span class="font-semibold text-white"><span id="val-wind-speed">--</span> km/h</span>
+                        </div>
+                        <div class="flex justify-between items-center text-sm">
+                            <span class="text-slate-400 flex items-center gap-2">
+                                <i class="fa-solid fa-compass text-amber-400"></i> Direction moy.
+                            </span>
+                            <span class="font-semibold text-white" id="val-wind-dir">--</span>
+                        </div>
+                        <div class="flex justify-between items-center text-sm">
+                            <span class="text-slate-400 flex items-center gap-2">
+                                <i class="fa-solid fa-temperature-half text-rose-400"></i> Température
+                            </span>
+                            <span class="font-semibold text-white"><span id="val-temp">--</span> °C</span>
+                        </div>
 
-      if (elevationChart) {
-        elevationChart.destroy();
-      }
+                        <!-- Barre de répartition vent de face vs favorable -->
+                        <div class="pt-2 border-t border-slate-800">
+                            <div class="flex justify-between text-xs text-slate-400 mb-1">
+                                <span>Vent de face: <strong id="pct-headwind" class="text-rose-400">0%</strong></span>
+                                <span>Favorable: <strong id="pct-tailwind" class="text-emerald-400">0%</strong></span>
+                            </div>
+                            <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden flex">
+                                <div id="bar-headwind" class="bg-rose-500 h-full transition-all duration-500" style="width: 0%"></div>
+                                <div id="bar-crosswind" class="bg-amber-400 h-full transition-all duration-500" style="width: 0%"></div>
+                                <div id="bar-tailwind" class="bg-emerald-500 h-full transition-all duration-500" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
 
-      // Plugin Chart.js personnalisé pour afficher le bandeau de vent en haut du profil
-      const windOverlayPlugin = {
-        id: 'windOverlay',
-        afterDraw: (chart) => {
-          const { ctx, chartArea, scales } = chart;
-          if (!scales.x || !scales.y) return;
+                    <!-- Légende de la carte -->
+                    <div class="bg-slate-900/40 p-3 rounded-lg border border-slate-800 text-xs space-y-2">
+                        <span class="font-medium text-slate-300 block mb-1">Légende des flèches :</span>
+                        <div class="flex items-center gap-2">
+                            <span class="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span>
+                            <span class="text-slate-400">Vent favorable (dos/trois-quarts)</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-3 h-3 rounded-full bg-amber-400 inline-block"></span>
+                            <span class="text-slate-400">Vent de côté (transversal)</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-3 h-3 rounded-full bg-rose-500 inline-block"></span>
+                            <span class="text-slate-400">Vent défavorable (face/défavorable)</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
-          const xAxis = scales.x;
+            <!-- Crédits Footer -->
+            <div class="text-xs text-slate-500 text-center pt-4 border-t border-slate-700/60">
+                Données météo fournies par <a href="https://open-meteo.com/" target="_blank" class="text-blue-400 hover:underline">Open-Meteo</a>
+            </div>
+        </aside>
 
-          checkpoints.forEach((cp) => {
-            const labelStr = cp.cumDistance.toFixed(1);
-            const xPos = xAxis.getPixelForValue(labelStr);
+        <!-- Zone Carte & Graphique -->
+        <main class="flex-1 flex flex-col min-w-0">
+            
+            <!-- Carte Leaflet -->
+            <div id="map" class="flex-1 w-full h-full"></div>
 
-            if (xPos < chartArea.left || xPos > chartArea.right) return;
+            <!-- Profil Altimétrique (Chart.js) -->
+            <div class="h-56 bg-slate-800 border-t border-slate-700 p-3 relative flex flex-col shrink-0">
+                <div class="flex justify-between items-center mb-1 px-2">
+                    <span class="text-xs font-semibold text-slate-400 flex items-center gap-1">
+                        <i class="fa-solid fa-chart-area text-blue-400"></i> Profil Altimétrique
+                    </span>
+                    <span id="hover-info" class="text-xs text-slate-300 font-mono">Survolez le graphique pour explorer la trace</span>
+                </div>
+                <div class="flex-1 relative w-full h-full">
+                    <canvas id="elevationChart"></canvas>
+                </div>
+            </div>
+        </main>
+    </div>
 
-            const arrowY = chartArea.top - 26;
-            const textY = chartArea.top - 10;
+    <!-- Script Application JS -->
+    <script>
+        // Variables Globales
+        let map, elevationChart;
+        let trackPolyline = null;
+        let startMarker = null;
+        let endMarker = null;
+        let hoverMarker = null;
+        let windMarkersLayer = L.layerGroup();
+        let courseArrowsLayer = L.layerGroup();
 
-            // 1. Ligne pointillée de repère vertical vers le profil
-            ctx.save();
-            ctx.beginPath();
-            ctx.setLineDash([3, 3]);
-            ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)';
-            ctx.moveTo(xPos, chartArea.top - 5);
-            ctx.lineTo(xPos, chartArea.bottom);
-            ctx.stroke();
-            ctx.restore();
+        let trackData = []; // { lat, lng, ele, dist, time, bearing, windSpeed, windDir, windImpact }
 
-            // 2. Calcul de la rotation relative au sens de déplacement (0 rad = Vent de dos -> Flèche vers la droite)
-            const relAngleRad = (cp.windDir + 180 - cp.heading) * Math.PI / 180;
+        // Initialisation au chargement de la page
+        document.addEventListener('DOMContentLoaded', () => {
+            initMap();
+            initChart();
+            
+            document.getElementById('gpx-file').addEventListener('change', handleFileUpload);
+        });
 
-            // Couleur d'impact
-            let color = '#f59e0b'; // Latéral (Jaune)
-            let diff = Math.abs(cp.windDir - cp.heading);
-            if (diff > 180) diff = 360 - diff;
-            if (diff < 45) color = '#ef4444'; // Face (Rouge)
-            else if (diff > 135) color = '#10b981'; // Dos (Vert)
+        // 1. Initialisation de la Carte Leaflet
+        function initMap() {
+            map = L.map('map', { zoomControl: false }).setView([46.6, -1.8], 10);
 
-            // 3. Dessin de la flèche orientée
-            ctx.save();
-            ctx.translate(xPos, arrowY);
-            ctx.rotate(relAngleRad);
+            // Fond de carte sombre (CartoDB Dark Matter)
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+                subdomains: 'abcd',
+                maxZoom: 19
+            }).addTo(map);
 
-            ctx.beginPath();
-            ctx.strokeStyle = color;
-            ctx.fillStyle = color;
-            ctx.lineWidth = 2.5;
-            ctx.moveTo(-7, 0);
-            ctx.lineTo(6, 0);
-            ctx.lineTo(1, -4);
-            ctx.moveTo(6, 0);
-            ctx.lineTo(1, 4);
-            ctx.stroke();
-            ctx.restore();
+            L.control.zoom({ position: 'topright' }).addTo(map);
 
-            // 4. Texte Vitesse du vent
-            ctx.save();
-            ctx.font = 'bold 10px sans-serif';
-            ctx.fillStyle = color;
-            ctx.textAlign = 'center';
-            ctx.fillText(`${cp.windSpeed}k`, xPos, textY);
-            ctx.restore();
-          });
+            windMarkersLayer.addTo(map);
+            courseArrowsLayer.addTo(map);
         }
-      };
 
-      elevationChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels: labels,
-          datasets: [{
-            label: 'Altitude (m)',
-            data: elevations,
-            borderColor: '#10b981',
-            backgroundColor: 'rgba(16, 185, 129, 0.15)',
-            fill: true,
-            tension: 0.15,
-            pointRadius: 0,
-            pointHoverRadius: 6,
-            pointHoverBackgroundColor: '#38bdf8'
-          }]
-        },
-        plugins: [windOverlayPlugin],
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          layout: {
-            padding: {
-              top: 42 // Espace réservé en haut pour le bandeau vent
-            }
-          },
-          interaction: { mode: 'index', intersect: false },
-          plugins: {
-            legend: { display: false },
-            tooltip: {
-              callbacks: {
-                title: (items) => `Distance : ${items[0].label} km`,
-                label: (item) => {
-                  const idx = item.dataIndex;
-                  const pt = fullTrack[idx];
-                  
-                  // Recherche du point de contrôle le plus proche pour le survol
-                  let closestCp = checkpoints[0];
-                  let minD = Infinity;
-                  checkpoints.forEach(cp => {
-                    const d = Math.abs(cp.cumDistance - pt.cumDistance);
-                    if (d < minD) { minD = d; closestCp = cp; }
-                  });
-
-                  return [
-                    `Altitude : ${item.raw} m`,
-                    `Vent : ${closestCp.windSpeed} km/h (${closestCp.impact.label})`,
-                    `Vitesse ajustée : ${closestCp.adjustedSpeed} km/h`
-                  ];
+        // 2. Initialisation du Graphique Altimétrique (Chart.js)
+        function initChart() {
+            const ctx = document.getElementById('elevationChart').getContext('2d');
+            
+            elevationChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Altitude (m)',
+                        data: [],
+                        borderColor: '#38bdf8',
+                        borderWidth: 2,
+                        backgroundColor: (context) => {
+                            const ctx = context.chart.ctx;
+                            const gradient = ctx.createLinearGradient(0, 0, 0, 180);
+                            gradient.addColorStop(0, 'rgba(56, 189, 248, 0.4)');
+                            gradient.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+                            return gradient;
+                        },
+                        fill: true,
+                        tension: 0.2,
+                        pointRadius: 0,
+                        pointHoverRadius: 6,
+                        pointHoverBackgroundColor: '#ffffff',
+                        pointHoverBorderColor: '#38bdf8',
+                        pointHoverBorderWidth: 3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                title: (items) => `Distance : ${items[0].label} km`,
+                                label: (item) => {
+                                    const point = trackData[item.dataIndex];
+                                    let text = `Altitude : ${point.ele} m`;
+                                    if (point.windSpeed) {
+                                        text += ` | Vent : ${point.windSpeed} km/h`;
+                                    }
+                                    return text;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#94a3b8', maxTicksLimit: 10, callback: (v) => `${v.toFixed(1)} km` }
+                        },
+                        y: {
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#94a3b8' }
+                        }
+                    },
+                    onHover: (event, activeElements) => {
+                        if (activeElements && activeElements.length > 0) {
+                            const index = activeElements[0].index;
+                            highlightPointOnMap(index);
+                        } else {
+                            removeHoverMarker();
+                        }
+                    }
                 }
-              }
-            }
-          },
-          onHover: (event, activeElements) => {
-            if (activeElements.length > 0) {
-              const idx = activeElements[0].index;
-              const pt = fullTrack[idx];
-
-              if (!hoverMarker) {
-                hoverMarker = L.circleMarker([pt.lat, pt.lon], {
-                  radius: 7,
-                  color: '#ffffff',
-                  fillColor: '#38bdf8',
-                  fillOpacity: 1,
-                  weight: 3
-                }).addTo(map);
-              } else {
-                hoverMarker.setLatLng([pt.lat, pt.lon]);
-              }
-            }
-          },
-          scales: {
-            x: {
-              title: { display: true, text: 'Distance (km)', color: '#94a3b8' },
-              ticks: { color: '#94a3b8', maxTicksLimit: 12 },
-              grid: { color: '#334155' }
-            },
-            y: {
-              title: { display: true, text: 'Altitude (m)', color: '#94a3b8' },
-              ticks: { color: '#94a3b8' },
-              grid: { color: '#334155' }
-            }
-          }
+            });
         }
-      });
-    }
 
-    // Affichage Tableau
-    function renderTable(checkpoints, intervalKm, baseSpeed) {
-      document.getElementById('table-interval-badge').textContent = `Intervalle : tous les ${intervalKm} km`;
-      const tableBody = document.getElementById('summary-table-body');
-      tableBody.innerHTML = '';
+        // 3. Gestion du chargement du fichier GPX
+        function handleFileUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
 
-      checkpoints.forEach((cp) => {
-        const speedDiff = Math.round((cp.adjustedSpeed - baseSpeed) * 10) / 10;
-        const speedDiffText = speedDiff > 0 ? `(+${speedDiff})` : `${speedDiff}`;
-        const speedClass = speedDiff < 0 ? 'text-red-400' : speedDiff > 0 ? 'text-emerald-400' : 'text-slate-300';
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                parseGPX(event.target.result);
+            };
+            reader.readAsText(file);
+        }
 
-        const row = document.createElement('tr');
-        row.className = 'hover:bg-slate-700/30 transition';
-        row.innerHTML = `
-          <td class="p-3 font-semibold">${cp.cumDistance.toFixed(1)} km</td>
-          <td class="p-3 text-slate-400">${cp.estimatedTime.toLocaleDateString()} ${cp.estimatedTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
-          <td class="p-3 font-medium">${Math.round(cp.ele)} m</td>
-          <td class="p-3 font-bold" style="color: ${cp.speedColor.color}">${cp.windSpeed} km/h <span class="text-xs text-slate-400 font-normal">(raf. ${cp.windGusts} km/h)</span></td>
-          <td class="p-3">${cp.windDir}° (${getCardinalDirection(cp.windDir)})</td>
-          <td class="p-3 font-semibold">${cp.impact.label}</td>
-          <td class="p-3 font-bold ${speedClass}">${cp.adjustedSpeed} km/h <span class="text-xs font-normal text-slate-400">${speedDiffText}</span></td>
-        `;
-        tableBody.appendChild(row);
-      });
+        // 4. Parsing XML du GPX
+        function parseGPX(xmlText) {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+            const trkpts = xmlDoc.querySelectorAll("trkpt");
 
-      document.getElementById('table-container').classList.remove('hidden');
-    }
+            if (trkpts.length === 0) {
+                alert("Aucun point de trace trouvé dans le fichier GPX.");
+                return;
+            }
 
-    // Fonctions Utilitaires
-    function getWindSpeedColor(speed) {
-      if (speed < 15) return { color: '#3b82f6', label: 'Faible' };
-      if (speed < 30) return { color: '#10b981', label: 'Modéré' };
-      if (speed < 45) return { color: '#f59e0b', label: 'Soutenu' };
-      return { color: '#ef4444', label: 'Fort' };
-    }
+            trackData = [];
+            let totalDistance = 0;
+            let eleGain = 0;
+            let eleLoss = 0;
 
-    function haversineDistance(p1, p2) {
-      const R = 6371;
-      const dLat = (p2.lat - p1.lat) * Math.PI / 180;
-      const dLon = (p2.lon - p1.lon) * Math.PI / 180;
-      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                Math.cos(p1.lat * Math.PI / 180) * Math.cos(p2.lat * Math.PI / 180) *
-                Math.sin(dLon/2) * Math.sin(dLon/2);
-      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    }
+            let prevLat = null, prevLng = null, prevEle = null;
 
-    function calculateBearing(p1, p2) {
-      const dLon = (p2.lon - p1.lon) * Math.PI / 180;
-      const lat1 = p1.lat * Math.PI / 180;
-      const lat2 = p2.lat * Math.PI / 180;
-      const y = Math.sin(dLon) * Math.cos(lat2);
-      const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
-      return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
-    }
+            trkpts.forEach((pt, i) => {
+                const lat = parseFloat(pt.getAttribute("lat"));
+                const lng = parseFloat(pt.getAttribute("lon"));
+                const eleNode = pt.querySelector("ele");
+                const timeNode = pt.querySelector("time");
 
-    function calculateWindImpact(heading, windDir) {
-      let diff = Math.abs(windDir - heading);
-      if (diff > 180) diff = 360 - diff;
+                const ele = eleNode ? parseFloat(eleNode.textContent) : 0;
+                const time = timeNode ? new Date(timeNode.textContent) : null;
 
-      if (diff < 45) return { label: 'Vent de face' };
-      if (diff > 135) return { label: 'Vent de dos' };
-      return { label: 'Vent latéral' };
-    }
+                if (i > 0) {
+                    const dist = haversineDistance(prevLat, prevLng, lat, lng);
+                    totalDistance += dist;
 
-    function getCardinalDirection(deg) {
-      const dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
-      return dirs[Math.round(deg / 22.5) % 16];
-    }
+                    const diffEle = ele - prevEle;
+                    if (diffEle > 0) eleGain += diffEle;
+                    else eleLoss += Math.abs(diffEle);
+                }
 
-    function getNearestHourISO(date) {
-      const d = new Date(date);
-      if (d.getMinutes() >= 30) d.setHours(d.getHours() + 1);
-      d.setMinutes(0, 0, 0);
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:00`;
-    }
+                trackData.push({
+                    lat,
+                    lng,
+                    ele: Math.round(ele),
+                    dist: parseFloat(totalDistance.toFixed(2)),
+                    time,
+                    bearing: 0,
+                    windSpeed: null,
+                    windDir: null,
+                    windImpact: 0 // -1: vent de face, 0: côté, 1: vent favorable
+                });
 
-    function showStatus(msg, type) {
-      const el = document.getElementById('status-message');
-      el.classList.remove('hidden', 'bg-red-900/50', 'text-red-200', 'bg-emerald-900/50', 'text-emerald-200', 'bg-slate-800', 'text-slate-300');
-      
-      if (type === 'error') el.classList.add('bg-red-900/50', 'text-red-200', 'border', 'border-red-700');
-      else if (type === 'success') el.classList.add('bg-emerald-900/50', 'text-emerald-200', 'border', 'border-emerald-700');
-      else el.classList.add('bg-slate-800', 'text-slate-300', 'border', 'border-slate-700');
+                prevLat = lat;
+                prevLng = lng;
+                prevEle = ele;
+            });
 
-      el.textContent = msg;
-    }
-  </script>
+            // Calcul des caps (bearing) entre chaque point
+            for (let i = 0; i < trackData.length - 1; i++) {
+                trackData[i].bearing = calculateBearing(
+                    trackData[i].lat, trackData[i].lng,
+                    trackData[i + 1].lat, trackData[i + 1].lng
+                );
+            }
+            if (trackData.length > 1) {
+                trackData[trackData.length - 1].bearing = trackData[trackData.length - 2].bearing;
+            }
+
+            // Mise à jour de l'UI
+            updateStatsSummary(totalDistance, eleGain, eleLoss);
+            renderTrackOnMap();
+            updateChart();
+            
+            // Récupération automatique des données de vent depuis Open-Meteo
+            fetchWindData();
+        }
+
+        // 5. Calculs géographiques : Haversine & Bearing
+        function haversineDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; // Rayon Terre en km
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        function calculateBearing(lat1, lon1, lat2, lon2) {
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const y = Math.sin(dLon) * Math.cos(lat2 * Math.PI / 180);
+            const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
+                      Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos(dLon);
+            const brng = Math.atan2(y, x) * 180 / Math.PI;
+            return (brng + 360) % 360;
+        }
+
+        // 6. Affichage de la Trace, Marqueurs de Départ, d'Arrivée et Flèches de Parcours
+        function renderTrackOnMap() {
+            // Nettoyage des anciennes couches
+            if (trackPolyline) map.removeLayer(trackPolyline);
+            if (startMarker) map.removeLayer(startMarker);
+            if (endMarker) map.removeLayer(endMarker);
+            windMarkersLayer.clearLayers();
+            courseArrowsLayer.clearLayers();
+
+            const latLngs = trackData.map(p => [p.lat, p.lng]);
+
+            // Trace principale
+            trackPolyline = L.polyline(latLngs, {
+                color: '#38bdf8',
+                weight: 4,
+                opacity: 0.9,
+                lineJoin: 'round'
+            }).addTo(map);
+
+            map.fitBounds(trackPolyline.getBounds(), { padding: [40, 40] });
+
+            // Marqueur de Départ (Vert)
+            const startPt = trackData[0];
+            const startIcon = L.divIcon({
+                className: 'custom-start-marker',
+                html: `<div style="background-color:#10b981; width:28px; height:28px; border-radius:50%; border:3px solid white; display:flex; align-items:center; justify-content:center; color:white; font-size:12px; box-shadow: 0 4px 6px rgba(0,0,0,0.4);"><i class="fa-solid fa-play"></i></div>`,
+                iconSize: [28, 28],
+                iconAnchor: [14, 14]
+            });
+            startMarker = L.marker([startPt.lat, startPt.lng], { icon: startIcon })
+                .bindPopup(`<b>Départ</b><br>Altitude: ${startPt.ele}m`)
+                .addTo(map);
+
+            // Marqueur d'Arrivée (Rouge)
+            const endPt = trackData[trackData.length - 1];
+            const endIcon = L.divIcon({
+                className: 'custom-end-marker',
+                html: `<div style="background-color:#ef4444; width:28px; height:28px; border-radius:50%; border:3px solid white; display:flex; align-items:center; justify-content:center; color:white; font-size:12px; box-shadow: 0 4px 6px rgba(0,0,0,0.4);"><i class="fa-solid fa-flag-checkered"></i></div>`,
+                iconSize: [28, 28],
+                iconAnchor: [14, 14]
+            });
+            endMarker = L.marker([endPt.lat, endPt.lng], { icon: endIcon })
+                .bindPopup(`<b>Arrivée</b><br>Distance: ${endPt.dist} km<br>Altitude: ${endPt.ele}m`)
+                .addTo(map);
+
+            // Ajout des flèches de sens de parcours le long de la ligne
+            addCourseDirectionArrows();
+        }
+
+        // Flèches indiquant la direction du parcours
+        function addCourseDirectionArrows() {
+            const step = Math.max(1, Math.floor(trackData.length / 15)); // ~15 flèches régulièrement espacées
+            
+            for (let i = step; i < trackData.length - 1; i += step) {
+                const pt = trackData[i];
+                const arrowIcon = L.divIcon({
+                    className: 'course-arrow-icon',
+                    html: `<div style="transform: rotate(${pt.bearing}deg); color: #ffffff; opacity: 0.8; font-size: 14px; text-shadow: 0 0 3px rgba(0,0,0,0.8);">
+                            <i class="fa-solid fa-chevron-up"></i>
+                           </div>`,
+                    iconSize: [16, 16],
+                    iconAnchor: [8, 8]
+                });
+                L.marker([pt.lat, pt.lng], { icon: arrowIcon, interactive: false }).addTo(courseArrowsLayer);
+            }
+        }
+
+        // 7. Requête de l'API Open-Meteo pour récupérer le vent
+        async function fetchWindData() {
+            if (trackData.length === 0) return;
+
+            const centerLat = trackData[Math.floor(trackData.length / 2)].lat;
+            const centerLng = trackData[Math.floor(trackData.length / 2)].lng;
+            
+            // Date de référence : date du GPX ou aujourd'hui
+            let dateStr = new Date().toISOString().split('T')[0];
+            if (trackData[0].time) {
+                dateStr = trackData[0].time.toISOString().split('T')[0];
+            }
+
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=${centerLat}&longitude=${centerLng}&hourly=wind_speed_10m,wind_direction_10m,temperature_2m&wind_speed_unit=kmh&forecast_days=1`;
+
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data && data.hourly) {
+                    processWindData(data.hourly);
+                }
+            } catch (err) {
+                console.error("Erreur lors de la récupération météo Open-Meteo :", err);
+            }
+        }
+
+        // Processing et association du vent à chaque segment
+        function processWindData(hourly) {
+            const avgWindSpeed = Math.round(hourly.wind_speed_10m.reduce((a, b) => a + b, 0) / hourly.wind_speed_10m.length);
+            const avgWindDir = Math.round(hourly.wind_direction_10m.reduce((a, b) => a + b, 0) / hourly.wind_direction_10m.length);
+            const avgTemp = Math.round(hourly.temperature_2m.reduce((a, b) => a + b, 0) / hourly.temperature_2m.length);
+
+            let headwindCount = 0;
+            let crosswindCount = 0;
+            let tailwindCount = 0;
+
+            trackData.forEach(pt => {
+                pt.windSpeed = avgWindSpeed;
+                pt.windDir = avgWindDir;
+
+                // Angle relatif entre le vent (d'où il vient) et la direction du cycliste/coureur
+                // Le vent "vient de" windDir, donc le flux va vers (windDir + 180) % 360
+                const windTo = (avgWindDir + 180) % 360;
+                let angleDiff = Math.abs(pt.bearing - windTo);
+                if (angleDiff > 180) angleDiff = 360 - angleDiff;
+
+                // Classification impact vent
+                if (angleDiff < 45) {
+                    pt.windImpact = 1; // Vent très favorable (dans le dos)
+                    tailwindCount++;
+                } else if (angleDiff > 135) {
+                    pt.windImpact = -1; // Vent défavorable (de face)
+                    headwindCount++;
+                } else {
+                    pt.windImpact = 0; // Vent latéral
+                    crosswindCount++;
+                }
+            });
+
+            // Mise à jour de la synthèse textuelle
+            document.getElementById('val-wind-speed').textContent = avgWindSpeed;
+            document.getElementById('val-wind-dir').textContent = `${avgWindDir}° (${getCompassDirection(avgWindDir)})`;
+            document.getElementById('val-temp').textContent = avgTemp;
+
+            const total = trackData.length;
+            const pctHead = Math.round((headwindCount / total) * 100);
+            const pctCross = Math.round((crosswindCount / total) * 100);
+            const pctTail = Math.round((tailwindCount / total) * 100);
+
+            document.getElementById('pct-headwind').textContent = `${pctHead}%`;
+            document.getElementById('pct-tailwind').textContent = `${pctTail}%`;
+
+            document.getElementById('bar-headwind').style.width = `${pctHead}%`;
+            document.getElementById('bar-crosswind').style.width = `${pctCross}%`;
+            document.getElementById('bar-tailwind').style.width = `${pctTail}%`;
+
+            // Affichage des flèches de vent sur la carte
+            renderWindArrowsOnMap();
+        }
+
+        // Orientation du vent en rose des vents
+        function getCompassDirection(deg) {
+            const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
+            return dirs[Math.round(deg / 45) % 8];
+        }
+
+        // Affichage des flèches de vent orientées et colorées le long du parcours
+        function renderWindArrowsOnMap() {
+            windMarkersLayer.clearLayers();
+
+            const step = Math.max(1, Math.floor(trackData.length / 12)); // ~12 flèches de vent
+
+            for (let i = Math.floor(step / 2); i < trackData.length; i += step) {
+                const pt = trackData[i];
+                
+                // Couleur basée sur l'impact du vent
+                let color = '#f59e0b'; // Vent de côté (Ambre)
+                if (pt.windImpact === 1) color = '#10b981'; // Vent favorable (Vert)
+                if (pt.windImpact === -1) color = '#ef4444'; // Vent de face (Rouge)
+
+                // La flèche pointe dans la direction OÙ VA LE VENT (windDir + 180)
+                const windVectorAngle = (pt.windDir + 180) % 360;
+
+                const windIcon = L.divIcon({
+                    className: 'wind-arrow-icon',
+                    html: `<div style="transform: rotate(${windVectorAngle}deg); background-color: rgba(15, 23, 42, 0.85); width: 28px; height: 28px; border-radius: 50%; border: 2px solid ${color}; display: flex; align-items: center; justify-content: center; color: ${color}; font-size: 14px; box-shadow: 0 2px 5px rgba(0,0,0,0.5);">
+                            <i class="fa-solid fa-arrow-up"></i>
+                           </div>`,
+                    iconSize: [28, 28],
+                    iconAnchor: [14, 14]
+                });
+
+                L.marker([pt.lat, pt.lng], { icon: windIcon })
+                    .bindPopup(`<b>Vent à ce point :</b><br>
+                                Vitesse: ${pt.windSpeed} km/h<br>
+                                Direction: ${pt.windDir}° (${getCompassDirection(pt.windDir)})<br>
+                                Impact: ${pt.windImpact === 1 ? 'Favorable' : (pt.windImpact === -1 ? 'Vent de face' : 'Vent latéral')}`)
+                    .addTo(windMarkersLayer);
+            }
+        }
+
+        // 8. Mise à jour du graphique Chart.js
+        function updateChart() {
+            const labels = trackData.map(p => p.dist);
+            const eleData = trackData.map(p => p.ele);
+
+            elevationChart.data.labels = labels;
+            elevationChart.data.datasets[0].data = eleData;
+            elevationChart.update();
+        }
+
+        // 9. Synchronisation du survol (Graphique -> Carte)
+        function highlightPointOnMap(index) {
+            const pt = trackData[index];
+            if (!pt) return;
+
+            removeHoverMarker();
+
+            const hoverIcon = L.divIcon({
+                className: 'hover-marker',
+                html: `<div class="hover-point"></div>`,
+                iconSize: [14, 14],
+                iconAnchor: [7, 7]
+            });
+
+            hoverMarker = L.marker([pt.lat, pt.lng], { icon: hoverIcon, zIndexOffset: 1000 }).addTo(map);
+
+            // Mise à jour du texte d'information au survol
+            document.getElementById('hover-info').innerHTML = 
+                `<strong>${pt.dist} km</strong> | Alt: <strong>${pt.ele} m</strong> ${pt.windSpeed ? `| Vent: <strong>${pt.windSpeed} km/h</strong>` : ''}`;
+        }
+
+        function removeHoverMarker() {
+            if (hoverMarker) {
+                map.removeLayer(hoverMarker);
+                hoverMarker = null;
+            }
+            document.getElementById('hover-info').textContent = "Survolez le graphique pour explorer la trace";
+        }
+
+        // 10. Mise à jour des cartes de résumé
+        function updateStatsSummary(distance, gain, loss) {
+            document.getElementById('status-card').classList.add('hidden');
+            document.getElementById('stats-container').classList.remove('hidden');
+
+            document.getElementById('val-distance').textContent = distance.toFixed(1);
+            document.getElementById('val-ele-gain').textContent = Math.round(gain);
+            document.getElementById('val-ele-loss').textContent = Math.round(loss);
+
+            // Estimation de durée simple (vitesse moyenne arbitraire ~22 km/h pour du vélo)
+            const hours = distance / 22;
+            const h = Math.floor(hours);
+            const m = Math.round((hours - h) * 60);
+            document.getElementById('val-duration').textContent = `${h}h${m < 10 ? '0' : ''}${m}`;
+        }
+    </script>
 </body>
 </html>
