@@ -5,27 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GPX Wind & Elevation Tracker</title>
     
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Leaflet CSS & JS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    
-    <!-- Chart.js pour le profil d'élévation -->
+    <script src="https://unpkg.com/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylineDecorator.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    
-    <!-- FontAwesome pour les icônes -->
+    <!-- Plugin Chart.js Zoom -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-zoom/2.0.1/chartjs-plugin-zoom.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
 
     <style>
-        /* Personnalisation de la scrollbar et carte */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #0f172a; }
         ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
         .leaflet-container { background-color: #0f172a !important; }
         
-        /* Animation pour le marqueur de survol */
         .hover-point {
             width: 14px;
             height: 14px;
@@ -34,264 +28,395 @@
             border-radius: 50%;
             box-shadow: 0 0 10px rgba(56, 189, 248, 0.8);
         }
+        .wind-grid-icon {
+            transition: transform 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            filter: drop-shadow(0 1px 2px rgba(0,0,0,0.8));
+        }
+        .leaflet-top.leaflet-right { top: 10px; right: 10px; }
+        .leaflet-control-layers { border: 1px solid #334155 !important; background: rgba(15, 23, 42, 0.95) !important; color: #f1f5f9; border-radius: 0.5rem; }
+
+        aside {
+            transition: width 0.3s ease, transform 0.3s ease, padding 0.3s ease;
+        }
+        aside.collapsed {
+            width: 0 !important;
+            min-width: 0 !important;
+            padding-left: 0 !important;
+            padding-right: 0 !important;
+            overflow: hidden;
+            border-right: none !important;
+        }
     </style>
 </head>
 <body class="h-full flex flex-col font-sans overflow-hidden">
 
     <!-- En-tête -->
-    <header class="bg-slate-800 border-b border-slate-700 px-6 py-3 flex items-center justify-between shrink-0 shadow-lg">
+    <header class="bg-slate-800 border-b border-slate-700 px-4 md:px-6 py-3 flex items-center justify-between shrink-0 shadow-lg z-30">
         <div class="flex items-center space-x-3">
-            <div class="p-2 bg-blue-600 rounded-lg text-white">
-                <i class="fa-solid fa-wind text-xl"></i>
+            <button id="sidebar-toggle-mobile" class="text-slate-300 hover:text-white p-1.5 rounded-lg bg-slate-700/50 hover:bg-slate-700 transition-colors" title="Afficher/Masquer le panneau">
+                <i class="fa-solid fa-bars"></i>
+            </button>
+            <div class="p-2 bg-blue-600 rounded-lg text-white hidden sm:block">
+                <i class="fa-solid fa-wind text-lg"></i>
             </div>
             <div>
-                <h1 class="font-bold text-lg text-white leading-tight">GPX Wind & Elevation Tracker</h1>
-                <p class="text-xs text-slate-400">Analyse du vent et profil altimétrique de vos parcours</p>
+                <h1 class="font-bold text-base md:text-lg text-white leading-tight">Contrevent</h1>
+                <p class="text-[11px] md:text-xs text-slate-400 hidden xs:block">Analyse dynamique du vent, D+, D- et grille météo</p>
             </div>
         </div>
         
-        <!-- Sélection de fichier GPX -->
         <div class="flex items-center space-x-3">
-            <label for="gpx-file" class="cursor-pointer bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors flex items-center space-x-2 shadow-sm">
+            <label for="gpx-file" class="cursor-pointer bg-blue-600 hover:bg-blue-500 text-white text-xs md:text-sm font-medium px-3 md:px-4 py-2 rounded-lg transition-colors flex items-center space-x-2 shadow-sm">
                 <i class="fa-solid fa-file-upload"></i>
-                <span>Importer un fichier GPX</span>
+                <span class="hidden sm:inline">Importer un fichier GPX</span>
+                <span class="sm:hidden">GPX</span>
             </label>
             <input type="file" id="gpx-file" accept=".gpx" class="hidden">
         </div>
     </header>
 
     <!-- Zone Principale -->
-    <div class="flex-1 flex overflow-hidden">
+    <div class="flex-1 flex overflow-hidden relative">
         
-        <!-- Panneau latéral : Métriques et Informations -->
-        <aside class="w-80 bg-slate-800/90 border-r border-slate-700 p-5 flex flex-col justify-between overflow-y-auto shrink-0">
-            <div class="space-y-6">
-                
-                <!-- Zone d'information / statut -->
+        <button id="sidebar-expand-btn" class="absolute left-0 top-3 z-20 bg-slate-800 hover:bg-slate-700 text-slate-200 p-2 rounded-r-lg border-y border-r border-slate-600 shadow-md hidden transition-all" title="Ouvrir le panneau">
+            <i class="fa-solid fa-chevron-right text-xs"></i>
+        </button>
+
+        <!-- Panneau latéral -->
+        <aside id="sidebar" class="w-80 md:w-80 bg-slate-800/95 border-r border-slate-700 p-4 md:p-5 flex flex-col overflow-y-auto shrink-0 z-20">
+            <div class="space-y-4">
+                <div class="flex items-center justify-between pb-2 border-b border-slate-700/80">
+                    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                        <i class="fa-solid fa-sliders"></i> Paramètres & Configuration
+                    </h2>
+                    <button id="sidebar-collapse-btn" class="text-slate-400 hover:text-white p-1 rounded transition-colors" title="Réduire le panneau">
+                        <i class="fa-solid fa-chevron-left text-xs"></i>
+                    </button>
+                </div>
+
                 <div id="status-card" class="bg-slate-900/60 rounded-xl p-4 border border-slate-700/60 text-center">
                     <i class="fa-solid fa-route text-3xl text-slate-500 mb-2"></i>
                     <p class="text-sm text-slate-400">Veuillez charger une trace GPX pour débuter l'analyse.</p>
                 </div>
 
-                <!-- Métriques clés -->
-                <div id="stats-container" class="hidden space-y-4">
-                    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Résumé du Parcours</h2>
-                    
-                    <div class="grid grid-cols-2 gap-3">
-                        <div class="bg-slate-900/80 p-3 rounded-lg border border-slate-700">
-                            <span class="text-xs text-slate-400 flex items-center gap-1">
-                                <i class="fa-solid fa-ruler-horizontal text-blue-400"></i> Distance
-                            </span>
-                            <p class="text-xl font-bold mt-1 text-white"><span id="val-distance">0</span> <span class="text-xs font-normal text-slate-400">km</span></p>
+                <div id="config-container" class="bg-slate-900/80 p-4 rounded-xl border border-slate-700 space-y-3">
+                    <form id="config-form" class="space-y-2">
+                        <div>
+                            <label class="block text-xs text-slate-400 mb-1">Départ</label>
+                            <input type="datetime-local" id="start-time" class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500" required />
                         </div>
-                        <div class="bg-slate-900/80 p-3 rounded-lg border border-slate-700">
-                            <span class="text-xs text-slate-400 flex items-center gap-1">
-                                <i class="fa-solid fa-mountain text-emerald-400"></i> Dénivelé +
-                            </span>
-                            <p class="text-xl font-bold mt-1 text-white"><span id="val-ele-gain">0</span> <span class="text-xs font-normal text-slate-400">m</span></p>
-                        </div>
-                        <div class="bg-slate-900/80 p-3 rounded-lg border border-slate-700">
-                            <span class="text-xs text-slate-400 flex items-center gap-1">
-                                <i class="fa-solid fa-arrow-down-short-wide text-amber-400"></i> Dénivelé -
-                            </span>
-                            <p class="text-xl font-bold mt-1 text-white"><span id="val-ele-loss">0</span> <span class="text-xs font-normal text-slate-400">m</span></p>
-                        </div>
-                        <div class="bg-slate-900/80 p-3 rounded-lg border border-slate-700">
-                            <span class="text-xs text-slate-400 flex items-center gap-1">
-                                <i class="fa-solid fa-stopwatch text-purple-400"></i> Durée estimée
-                            </span>
-                            <p class="text-lg font-bold mt-1 text-white" id="val-duration">--:--</p>
-                        </div>
-                    </div>
-
-                    <!-- Synthèse Météo & Vent -->
-                    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400 pt-2">Impact Météo & Vent</h2>
-                    
-                    <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-700 space-y-3">
-                        <div class="flex justify-between items-center text-sm">
-                            <span class="text-slate-400 flex items-center gap-2">
-                                <i class="fa-solid fa-wind text-cyan-400"></i> Vent moyen
-                            </span>
-                            <span class="font-semibold text-white"><span id="val-wind-speed">--</span> km/h</span>
-                        </div>
-                        <div class="flex justify-between items-center text-sm">
-                            <span class="text-slate-400 flex items-center gap-2">
-                                <i class="fa-solid fa-compass text-amber-400"></i> Direction moy.
-                            </span>
-                            <span class="font-semibold text-white" id="val-wind-dir">--</span>
-                        </div>
-                        <div class="flex justify-between items-center text-sm">
-                            <span class="text-slate-400 flex items-center gap-2">
-                                <i class="fa-solid fa-temperature-half text-rose-400"></i> Température
-                            </span>
-                            <span class="font-semibold text-white"><span id="val-temp">--</span> °C</span>
-                        </div>
-
-                        <!-- Barre de répartition vent de face vs favorable -->
-                        <div class="pt-2 border-t border-slate-800">
-                            <div class="flex justify-between text-xs text-slate-400 mb-1">
-                                <span>Vent de face: <strong id="pct-headwind" class="text-rose-400">0%</strong></span>
-                                <span>Favorable: <strong id="pct-tailwind" class="text-emerald-400">0%</strong></span>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">Vitesse cible plat</label>
+                                <div class="flex relative">
+                                    <input type="number" id="avg-speed" value="30" step="0.5" class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500" required />
+                                    <span class="absolute right-2 top-1.5 text-xs text-slate-500">km/h</span>
+                                </div>
                             </div>
-                            <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden flex">
-                                <div id="bar-headwind" class="bg-rose-500 h-full transition-all duration-500" style="width: 0%"></div>
-                                <div id="bar-crosswind" class="bg-amber-400 h-full transition-all duration-500" style="width: 0%"></div>
-                                <div id="bar-tailwind" class="bg-emerald-500 h-full transition-all duration-500" style="width: 0%"></div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">Intervalle</label>
+                                <div class="flex relative">
+                                    <input type="number" id="interval-km" value="5" step="0.5" class="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500" required />
+                                    <span class="absolute right-2 top-1.5 text-xs text-slate-500">km</span>
+                                </div>
                             </div>
                         </div>
-                    </div>
+                        <button type="submit" class="w-full mt-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm py-2 rounded-lg transition-colors shadow flex justify-center items-center gap-2">
+                            <i class="fa-solid fa-rotate-right"></i> Recalculer
+                        </button>
+                    </form>
 
-                    <!-- Légende de la carte -->
-                    <div class="bg-slate-900/40 p-3 rounded-lg border border-slate-800 text-xs space-y-2">
-                        <span class="font-medium text-slate-300 block mb-1">Légende des flèches :</span>
-                        <div class="flex items-center gap-2">
-                            <span class="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span>
-                            <span class="text-slate-400">Vent favorable (dos/trois-quarts)</span>
+                    <div class="pt-4 border-t border-slate-700 mt-2">
+                        <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-2">
+                            <i class="fa-solid fa-clock"></i> Évolution du Vent (Grille)
+                        </h2>
+                        <div class="flex justify-between text-xs text-slate-400 mb-1">
+                            <span>Départ</span>
+                            <span id="slider-time-label" class="font-bold text-blue-400">+0h</span>
                         </div>
-                        <div class="flex items-center gap-2">
-                            <span class="w-3 h-3 rounded-full bg-amber-400 inline-block"></span>
-                            <span class="text-slate-400">Vent de côté (transversal)</span>
+                        <input type="range" id="wind-slider" min="0" max="24" value="0" step="1" class="w-full accent-blue-500 cursor-pointer" />
+                    </div>
+                </div>
+
+                <div id="stats-container" class="hidden space-y-3">
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="bg-slate-900/80 p-2.5 rounded-lg border border-slate-700">
+                            <span class="text-[10px] uppercase text-slate-400 block mb-0.5">Distance</span>
+                            <p class="text-base font-bold text-white leading-none"><span id="val-distance">0</span> <span class="text-xs font-normal text-slate-400">km</span></p>
                         </div>
-                        <div class="flex items-center gap-2">
-                            <span class="w-3 h-3 rounded-full bg-rose-500 inline-block"></span>
-                            <span class="text-slate-400">Vent défavorable (face/défavorable)</span>
+                        <div class="bg-slate-900/80 p-2.5 rounded-lg border border-slate-700">
+                            <span class="text-[10px] uppercase text-slate-400 block mb-0.5 text-emerald-400">Dénivelé +</span>
+                            <p class="text-base font-bold text-white leading-none"><span id="val-ele-gain">0</span> <span class="text-xs font-normal text-slate-400">m</span></p>
+                        </div>
+                        <div class="bg-slate-900/80 p-2.5 rounded-lg border border-slate-700">
+                            <span class="text-[10px] uppercase text-slate-400 block mb-0.5 text-rose-400">Dénivelé -</span>
+                            <p class="text-base font-bold text-white leading-none"><span id="val-ele-loss">0</span> <span class="text-xs font-normal text-slate-400">m</span></p>
+                        </div>
+                        <div class="bg-slate-900/80 p-2.5 rounded-lg border border-slate-700">
+                            <span class="text-[10px] uppercase text-slate-400 block mb-0.5 text-purple-400">Durée estimée</span>
+                            <p class="text-base font-bold text-white leading-none" id="val-duration">--:--</p>
                         </div>
                     </div>
                 </div>
-            </div>
-
-            <!-- Crédits Footer -->
-            <div class="text-xs text-slate-500 text-center pt-4 border-t border-slate-700/60">
-                Données météo fournies par <a href="https://open-meteo.com/" target="_blank" class="text-blue-400 hover:underline">Open-Meteo</a>
             </div>
         </aside>
 
-        <!-- Zone Carte & Graphique -->
-        <main class="flex-1 flex flex-col min-w-0">
+        <!-- Zone Centrale -->
+        <main class="flex-1 flex flex-col min-w-0 bg-slate-950 relative">
             
-            <!-- Carte Leaflet -->
-            <div id="map" class="flex-1 w-full h-full"></div>
+            <div id="map" class="w-full flex-1 min-h-[30vh]"></div>
 
-            <!-- Profil Altimétrique (Chart.js) -->
-            <div class="h-56 bg-slate-800 border-t border-slate-700 p-3 relative flex flex-col shrink-0">
-                <div class="flex justify-between items-center mb-1 px-2">
-                    <span class="text-xs font-semibold text-slate-400 flex items-center gap-1">
-                        <i class="fa-solid fa-chart-area text-blue-400"></i> Profil Altimétrique
-                    </span>
-                    <span id="hover-info" class="text-xs text-slate-300 font-mono">Survolez le graphique pour explorer la trace</span>
+            <!-- Dashboard bas -->
+            <div id="bottom-dashboard" class="hidden flex flex-col h-[52vh] bg-slate-800 border-t border-slate-700 shrink-0 relative">
+                
+                <!-- Profil Altimétrique -->
+                <div class="h-48 p-3 relative flex flex-col shrink-0 border-b border-slate-700">
+                    <div class="flex justify-between items-center mb-1 px-2 z-20">
+                        <div class="flex items-center gap-4">
+                            <span class="text-xs font-semibold text-slate-400 flex items-center gap-1">
+                                <i class="fa-solid fa-chart-area text-blue-400"></i> Profil Altimétrique & Vent
+                            </span>
+                            
+                            <div id="chart-wind-indicator" class="hidden items-center gap-2 bg-slate-900/90 border border-slate-600 rounded-md px-2 py-0.5 text-xs shadow-md backdrop-blur">
+                                <span class="text-slate-400 font-medium">Vent instantané :</span>
+                                <span id="chart-wind-speed" class="text-blue-400 font-bold">-- km/h</span>
+                                <div id="chart-wind-arrow" class="w-4 h-4 flex items-center justify-center transition-transform duration-300">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="flex items-center gap-2">
+                            <button id="reset-zoom-btn" class="text-[10px] bg-slate-700 hover:bg-slate-600 text-slate-200 px-2 py-0.5 rounded border border-slate-600 transition-colors" title="Réinitialiser le zoom">
+                                <i class="fa-solid fa-expand"></i> Reset Zoom
+                            </button>
+                            <span id="hover-info" class="text-xs text-slate-300 font-mono">Survolez le graphique</span>
+                        </div>
+                    </div>
+
+                    <!-- Container du Graphique -->
+                    <div class="flex-1 relative w-full h-full">
+                        <canvas id="elevationChart"></canvas>
+                        <!-- Points / Badges Météo intégrés dynamiquement -->
+                        <div id="profile-weather-markers" class="absolute inset-0 pointer-events-none z-10 overflow-hidden"></div>
+                    </div>
                 </div>
-                <div class="flex-1 relative w-full h-full">
-                    <canvas id="elevationChart"></canvas>
+
+                <!-- Tableau de synthèse -->
+                <div class="flex-1 overflow-y-auto p-3">
+                    <table class="w-full text-left text-sm text-slate-300 whitespace-nowrap">
+                        <thead class="bg-slate-900/80 text-xs uppercase tracking-wider text-slate-400 sticky top-0 z-10 shadow">
+                            <tr>
+                                <th class="p-2 rounded-tl-lg">Dist.</th>
+                                <th class="p-2">Heure estimée</th>
+                                <th class="p-2">D+ / Seg.</th>
+                                <th class="p-2">D- / Seg.</th>
+                                <th class="p-2">Vent Réel</th>
+                                <th class="p-2">Orient.</th>
+                                <th class="p-2">Vitesse Ajust.</th>
+                                <th class="p-2 rounded-tr-lg">Écart chrono (Cumulé / Section)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="summary-table-body" class="divide-y divide-slate-700/50">
+                            <!-- JS fill -->
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </main>
     </div>
 
-    <!-- Script Application JS -->
     <script>
-        // Variables Globales
         let map, elevationChart;
-        let trackPolyline = null;
-        let startMarker = null;
-        let endMarker = null;
-        let hoverMarker = null;
-        let windMarkersLayer = L.layerGroup();
+        let trackPolyline = null, startMarker = null, endMarker = null, hoverMarker = null;
         let courseArrowsLayer = L.layerGroup();
+        let windGridLayer = L.layerGroup();
+        
+        let rawTrackData = []; 
+        let checkpoints = [];  
+        let gridData = [];     
+        let rawWeatherTimeSeries = null;
 
-        let trackData = []; // { lat, lng, ele, dist, time, bearing, windSpeed, windDir, windImpact }
+        // Plugin Chart.js pour dessiner les traits verticaux sur l'axe linéaire X
+        const verticalLinesPlugin = {
+            id: 'verticalLines',
+            afterDraw(chart) {
+                if (!checkpoints || checkpoints.length <= 1) return;
+                const ctx = chart.ctx;
+                const xAxis = chart.scales.x;
+                const yAxis = chart.scales.y;
+                
+                ctx.save();
+                ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 4]);
 
-        // Initialisation au chargement de la page
+                for (let i = 1; i < checkpoints.length; i++) {
+                    const cp = checkpoints[i];
+                    const xPixel = xAxis.getPixelForValue(cp.dist);
+                    if (xPixel >= xAxis.left && xPixel <= xAxis.right) {
+                        ctx.beginPath();
+                        ctx.moveTo(xPixel, yAxis.top);
+                        ctx.lineTo(xPixel, yAxis.bottom);
+                        ctx.stroke();
+                    }
+                }
+                ctx.restore();
+            }
+        };
+        Chart.register(verticalLinesPlugin);
+
         document.addEventListener('DOMContentLoaded', () => {
+            const now = new Date();
+            now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+            document.getElementById('start-time').value = now.toISOString().slice(0, 16);
+
             initMap();
             initChart();
+            initSidebarControls();
             
             document.getElementById('gpx-file').addEventListener('change', handleFileUpload);
+            document.getElementById('config-form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                if (rawTrackData.length > 0) processAndRender();
+            });
+            document.getElementById('wind-slider').addEventListener('input', handleSliderChange);
+            document.getElementById('reset-zoom-btn').addEventListener('click', () => {
+                if (elevationChart) {
+                    elevationChart.resetZoom();
+                    updateProfileWeatherMarkers();
+                }
+            });
+
+            window.addEventListener('resize', () => {
+                if (elevationChart) {
+                    elevationChart.resize();
+                    updateProfileWeatherMarkers();
+                }
+            });
+
+            if (window.innerWidth < 768) {
+                toggleSidebar(true);
+            }
         });
 
-        // 1. Initialisation de la Carte Leaflet
-        function initMap() {
-            map = L.map('map', { zoomControl: false }).setView([46.6, -1.8], 10);
+        function initSidebarControls() {
+            const sidebar = document.getElementById('sidebar');
+            const collapseBtn = document.getElementById('sidebar-collapse-btn');
+            const expandBtn = document.getElementById('sidebar-expand-btn');
+            const mobileToggle = document.getElementById('sidebar-toggle-mobile');
 
-            // Fond de carte sombre (CartoDB Dark Matter)
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
-                subdomains: 'abcd',
-                maxZoom: 19
-            }).addTo(map);
+            function toggleSidebar(forceClose = null) {
+                const isClosed = forceClose !== null ? forceClose : !sidebar.classList.contains('collapsed');
+                if (isClosed) {
+                    sidebar.classList.add('collapsed');
+                    expandBtn.classList.remove('hidden');
+                } else {
+                    sidebar.classList.remove('collapsed');
+                    expandBtn.classList.add('hidden');
+                }
+                setTimeout(() => { map.invalidateSize(); if(elevationChart) elevationChart.resize(); updateProfileWeatherMarkers(); }, 300);
+            }
 
-            L.control.zoom({ position: 'topright' }).addTo(map);
-
-            windMarkersLayer.addTo(map);
-            courseArrowsLayer.addTo(map);
+            collapseBtn.addEventListener('click', () => toggleSidebar(true));
+            expandBtn.addEventListener('click', () => toggleSidebar(false));
+            mobileToggle.addEventListener('click', () => toggleSidebar());
         }
 
-        // 2. Initialisation du Graphique Altimétrique (Chart.js)
+        function initMap() {
+            const cartoDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
+            });
+            const esriSatellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Tiles &copy; Esri', maxZoom: 19
+            });
+            const osmStandard = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap', maxZoom: 19
+            });
+
+            map = L.map('map', { zoomControl: true, layers: [cartoDark] }).setView([46.6, -1.8], 10);
+            
+            L.control.layers({
+                "Carto Sombre": cartoDark,
+                "Satellite (Esri)": esriSatellite,
+                "Plan Classique (OSM)": osmStandard
+            }, null, { position: 'topright' }).addTo(map);
+
+            courseArrowsLayer.addTo(map);
+            windGridLayer.addTo(map);
+        }
+
         function initChart() {
             const ctx = document.getElementById('elevationChart').getContext('2d');
-            
             elevationChart = new Chart(ctx, {
                 type: 'line',
-                data: {
-                    labels: [],
-                    datasets: [{
-                        label: 'Altitude (m)',
-                        data: [],
-                        borderColor: '#38bdf8',
-                        borderWidth: 2,
-                        backgroundColor: (context) => {
-                            const ctx = context.chart.ctx;
-                            const gradient = ctx.createLinearGradient(0, 0, 0, 180);
-                            gradient.addColorStop(0, 'rgba(56, 189, 248, 0.4)');
-                            gradient.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
-                            return gradient;
-                        },
-                        fill: true,
-                        tension: 0.2,
-                        pointRadius: 0,
-                        pointHoverRadius: 6,
-                        pointHoverBackgroundColor: '#ffffff',
-                        pointHoverBorderColor: '#38bdf8',
-                        pointHoverBorderWidth: 3
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: {
-                        mode: 'index',
-                        intersect: false
+                data: { datasets: [{
+                    label: 'Altitude (m)', data: [], borderColor: '#38bdf8', borderWidth: 2,
+                    backgroundColor: (ctx) => {
+                        const gradient = ctx.chart.ctx.createLinearGradient(0, 0, 0, 150);
+                        gradient.addColorStop(0, 'rgba(56, 189, 248, 0.4)');
+                        gradient.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+                        return gradient;
                     },
+                    fill: true, tension: 0.1, pointRadius: 0, pointHoverRadius: 6,
+                    pointHoverBackgroundColor: '#ffffff', pointHoverBorderColor: '#38bdf8'
+                }]},
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    animation: false,
+                    interaction: { mode: 'nearest', axis: 'x', intersect: false },
                     plugins: {
                         legend: { display: false },
                         tooltip: {
                             callbacks: {
-                                title: (items) => `Distance : ${items[0].label} km`,
+                                title: (items) => `Distance : ${Number(items[0].parsed.x).toFixed(2)} km`,
                                 label: (item) => {
-                                    const point = trackData[item.dataIndex];
-                                    let text = `Altitude : ${point.ele} m`;
-                                    if (point.windSpeed) {
-                                        text += ` | Vent : ${point.windSpeed} km/h`;
-                                    }
-                                    return text;
+                                    const pt = rawTrackData.find(p => Math.abs(p.dist - item.parsed.x) < 0.05) || rawTrackData[item.dataIndex];
+                                    const altArrondie = Math.round(Number(item.parsed.y));
+                                    if (!pt) return `Altitude : ${altArrondie} m`;
+                                    
+                                    let impactColor = pt.windImpact === 1 ? '🟢 Dos' : pt.windImpact === -1 ? '🔴 Face' : '🟠 Latéral';
+                                    return [
+                                        `Altitude : ${altArrondie} m`,
+                                        pt.windSpeed !== undefined ? `Vent réel : ${pt.windSpeed} km/h (${impactColor})` : 'Vent : En attente',
+                                        pt.windDir !== undefined ? `Direction : ${pt.windDir}°` : ''
+                                    ];
                                 }
+                            }
+                        },
+                        // Plugin Zoom avec glissement (pan) et pinch/wheel activés
+                        zoom: {
+                            zoom: {
+                                wheel: { enabled: true },
+                                pinch: { enabled: true },
+                                mode: 'x',
+                                onZoom: () => { updateProfileWeatherMarkers(); }
+                            },
+                            pan: {
+                                enabled: true,
+                                mode: 'x',
+                                modifierKey: null, // S'assure qu'aucune touche (Ctrl/Shift) n'est exigée
+                                threshold: 3,      // Déclenche le déplacement dès les premiers pixels de mouvement
+                                onPan: () => { updateProfileWeatherMarkers(); }
                             }
                         }
                     },
                     scales: {
-                        x: {
+                        x: { 
                             type: 'linear',
-                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
-                            ticks: { color: '#94a3b8', maxTicksLimit: 10, callback: (v) => `${v.toFixed(1)} km` }
+                            grid: { color: 'rgba(255,255,255,0.05)' }, 
+                            ticks: { color: '#94a3b8', maxTicksLimit: 12 },
+                            title: { display: false }
                         },
-                        y: {
-                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
-                            ticks: { color: '#94a3b8' }
-                        }
+                        y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } }
                     },
-                    onHover: (event, activeElements) => {
-                        if (activeElements && activeElements.length > 0) {
-                            const index = activeElements[0].index;
-                            highlightPointOnMap(index);
+                    onHover: (e, els) => {
+                        if (els.length > 0) {
+                            const index = els[0].index;
+                            if (rawTrackData[index]) highlightPointOnMap(index);
                         } else {
                             removeHoverMarker();
                         }
@@ -300,354 +425,496 @@
             });
         }
 
-        // 3. Gestion du chargement du fichier GPX
         function handleFileUpload(e) {
             const file = e.target.files[0];
             if (!file) return;
-
             const reader = new FileReader();
             reader.onload = (event) => {
-                parseGPX(event.target.result);
+                const parser = new DOMParser();
+                const xml = parser.parseFromString(event.target.result, "text/xml");
+                const trkpts = xml.querySelectorAll("trkpt");
+                
+                if (trkpts.length < 2) return alert("Fichier GPX invalide.");
+                
+                rawTrackData = [];
+                let totalDist = 0, prevLat = null, prevLng = null;
+
+                trkpts.forEach((pt, i) => {
+                    const lat = parseFloat(pt.getAttribute("lat"));
+                    const lng = parseFloat(pt.getAttribute("lon"));
+                    const ele = parseFloat(pt.querySelector("ele")?.textContent || 0);
+
+                    if (i > 0) totalDist += haversineDistance(prevLat, prevLng, lat, lng);
+                    
+                    rawTrackData.push({ lat, lng, ele, dist: parseFloat(totalDist.toFixed(3)) });
+                    prevLat = lat; prevLng = lng;
+                });
+
+                for (let i = 0; i < rawTrackData.length - 1; i++) {
+                    rawTrackData[i].bearing = calculateBearing(rawTrackData[i].lat, rawTrackData[i].lng, rawTrackData[i+1].lat, rawTrackData[i+1].lng);
+                }
+                rawTrackData[rawTrackData.length-1].bearing = rawTrackData[rawTrackData.length-2].bearing;
+
+                document.getElementById('status-card').classList.add('hidden');
+                document.getElementById('stats-container').classList.remove('hidden');
+                document.getElementById('bottom-dashboard').classList.remove('hidden');
+
+                processAndRender();
             };
             reader.readAsText(file);
         }
 
-        // 4. Parsing XML du GPX
-        function parseGPX(xmlText) {
-            const parser = new DOMParser();
-            const xmlDoc = parser.parseFromString(xmlText, "text/xml");
-            const trkpts = xmlDoc.querySelectorAll("trkpt");
+        async function processAndRender() {
+            const intervalKm = parseFloat(document.getElementById('interval-km').value);
+            const baseSpeed = parseFloat(document.getElementById('avg-speed').value);
+            const startTime = new Date(document.getElementById('start-time').value);
 
-            if (trkpts.length === 0) {
-                alert("Aucun point de trace trouvé dans le fichier GPX.");
-                return;
+            if (!rawWeatherTimeSeries) {
+                await fetchTrackAndGridWeather(startTime);
             }
 
-            trackData = [];
-            let totalDistance = 0;
-            let eleGain = 0;
-            let eleLoss = 0;
+            checkpoints = [];
+            let currentEleGain = 0;
+            let currentEleLoss = 0;
+            let lastEle = rawTrackData[0].ele;
+            let currentTime = new Date(startTime);
 
-            let prevLat = null, prevLng = null, prevEle = null;
+            const startWind = getMeteoAtPointAndTime(rawTrackData[0].lat, rawTrackData[0].lng, startTime, startTime);
+            const startCp = { 
+                ...rawTrackData[0], 
+                dist: 0,
+                trackIndex: 0,
+                segmentEleGain: 0, 
+                segmentEleLoss: 0, 
+                segmentDist: 0, 
+                estimatedTime: new Date(startTime),
+                windSpeed: startWind.speed,
+                windDir: startWind.dir,
+                bearing: rawTrackData[0].bearing,
+                adjustedSpeed: baseSpeed,
+                cumulativeDiffMins: 0,
+                sectionDiffMins: 0,
+                windImpact: 0
+            };
+            checkpoints.push(startCp);
 
-            trkpts.forEach((pt, i) => {
-                const lat = parseFloat(pt.getAttribute("lat"));
-                const lng = parseFloat(pt.getAttribute("lon"));
-                const eleNode = pt.querySelector("ele");
-                const timeNode = pt.querySelector("time");
+            let nextTarget = intervalKm;
+            let tempCheckpointsAcc = [{ ...startCp }];
 
-                const ele = eleNode ? parseFloat(eleNode.textContent) : 0;
-                const time = timeNode ? new Date(timeNode.textContent) : null;
+            for (let i = 1; i < rawTrackData.length; i++) {
+                const pt = rawTrackData[i];
+                let eleDiff = pt.ele - lastEle;
+                if (eleDiff > 0) currentEleGain += eleDiff;
+                else currentEleLoss += Math.abs(eleDiff);
+                lastEle = pt.ele;
 
-                if (i > 0) {
-                    const dist = haversineDistance(prevLat, prevLng, lat, lng);
-                    totalDistance += dist;
+                const currentWeather = getMeteoAtPointAndTime(pt.lat, pt.lng, startTime, currentTime);
+                const segmentDistDelta = pt.dist - rawTrackData[i-1].dist;
+                const effortDist = segmentDistDelta + (Math.max(0, eleDiff) / 100) + (Math.abs(Math.min(0, eleDiff)) / 150);
+                
+                const rad = (currentWeather.dir - pt.bearing) * Math.PI / 180;
+                const headwindComp = currentWeather.speed * Math.cos(rad);
+                const adjSpeed = Math.max(3, baseSpeed - (0.35 * headwindComp));
+                const realHours = effortDist / adjSpeed;
+                
+                currentTime = new Date(currentTime.getTime() + realHours * 3600000);
 
-                    const diffEle = ele - prevEle;
-                    if (diffEle > 0) eleGain += diffEle;
-                    else eleLoss += Math.abs(diffEle);
+                pt.estimatedTime = new Date(currentTime);
+                pt.windSpeed = currentWeather.speed;
+                pt.windDir = currentWeather.dir;
+                let angleDiff = Math.abs(pt.bearing - ((pt.windDir + 180) % 360));
+                if (angleDiff > 180) angleDiff = 360 - angleDiff;
+                pt.windImpact = angleDiff < 45 ? 1 : (angleDiff > 135 ? -1 : 0);
+
+                // Correction stricte des arrondis de distance (Pas de .1 ou .2 parasites)
+                while (pt.dist >= nextTarget && i < rawTrackData.length - 1) {
+                    const prevPt = rawTrackData[i-1];
+                    const prevCp = tempCheckpointsAcc[tempCheckpointsAcc.length - 1];
+                    const segDist = nextTarget - prevCp.dist;
+                    
+                    const spanDist = pt.dist - prevPt.dist;
+                    const ratio = spanDist > 0 ? (nextTarget - prevPt.dist) / spanDist : 1;
+                    
+                    const interpTime = new Date(prevPt.estimatedTime?.getTime() || (currentTime.getTime() - realHours * 3600000));
+                    
+                    const flatH = nextTarget / baseSpeed;
+                    const totalActualMins = (interpTime - startTime) / 60000;
+                    const cumDiff = Math.round(totalActualMins - (flatH * 60));
+                    
+                    const prevTotalIdealMins = (prevCp.dist / baseSpeed) * 60;
+                    const prevTotalActualMins = (prevCp.estimatedTime - startTime) / 60000;
+                    const prevCumDiff = Math.round(prevTotalActualMins - prevTotalIdealMins);
+                    const secDiff = cumDiff - prevCumDiff;
+
+                    const cpObj = {
+                        ...pt,
+                        dist: nextTarget,
+                        trackIndex: i,
+                        segmentEleGain: currentEleGain * ratio,
+                        segmentEleLoss: currentEleLoss * ratio,
+                        segmentDist: segDist,
+                        estimatedTime: interpTime,
+                        adjustedSpeed: Math.round(adjSpeed * 10) / 10,
+                        cumulativeDiffMins: cumDiff,
+                        sectionDiffMins: secDiff,
+                        windImpact: pt.windImpact
+                    };
+                    checkpoints.push(cpObj);
+                    tempCheckpointsAcc.push(cpObj);
+                    
+                    currentEleGain *= (1 - ratio);
+                    currentEleLoss *= (1 - ratio);
+                    nextTarget += intervalKm;
                 }
 
-                trackData.push({
-                    lat,
-                    lng,
-                    ele: Math.round(ele),
-                    dist: parseFloat(totalDistance.toFixed(2)),
-                    time,
-                    bearing: 0,
-                    windSpeed: null,
-                    windDir: null,
-                    windImpact: 0 // -1: vent de face, 0: côté, 1: vent favorable
-                });
+                if (i === rawTrackData.length - 1) {
+                    const prevCp = tempCheckpointsAcc[tempCheckpointsAcc.length - 1];
+                    const segDist = pt.dist - prevCp.dist;
+                    const flatH = pt.dist / baseSpeed;
+                    const totalActualMins = (pt.estimatedTime - startTime) / 60000;
+                    const cumDiff = Math.round(totalActualMins - (flatH * 60));
+                    const prevTotalIdealMins = (prevCp.dist / baseSpeed) * 60;
+                    const prevTotalActualMins = (prevCp.estimatedTime - startTime) / 60000;
+                    const prevCumDiff = Math.round(prevTotalActualMins - prevTotalIdealMins);
+                    const secDiff = cumDiff - prevCumDiff;
 
-                prevLat = lat;
-                prevLng = lng;
-                prevEle = ele;
-            });
-
-            // Calcul des caps (bearing) entre chaque point
-            for (let i = 0; i < trackData.length - 1; i++) {
-                trackData[i].bearing = calculateBearing(
-                    trackData[i].lat, trackData[i].lng,
-                    trackData[i + 1].lat, trackData[i + 1].lng
-                );
+                    const cpObj = {
+                        ...pt,
+                        dist: parseFloat(pt.dist.toFixed(1)),
+                        trackIndex: i,
+                        segmentEleGain: currentEleGain,
+                        segmentEleLoss: currentEleLoss,
+                        segmentDist: segDist,
+                        estimatedTime: pt.estimatedTime,
+                        adjustedSpeed: Math.round(adjSpeed * 10) / 10,
+                        cumulativeDiffMins: cumDiff,
+                        sectionDiffMins: secDiff,
+                        windImpact: pt.windImpact
+                    };
+                    checkpoints.push(cpObj);
+                }
             }
-            if (trackData.length > 1) {
-                trackData[trackData.length - 1].bearing = trackData[trackData.length - 2].bearing;
-            }
 
-            // Mise à jour de l'UI
-            updateStatsSummary(totalDistance, eleGain, eleLoss);
-            renderTrackOnMap();
-            updateChart();
+            const totalDist = rawTrackData[rawTrackData.length-1].dist;
+            const totalGain = checkpoints.reduce((acc, cp) => acc + (cp.segmentEleGain || 0), 0);
+            const totalLoss = checkpoints.reduce((acc, cp) => acc + (cp.segmentEleLoss || 0), 0);
             
-            // Récupération automatique des données de vent depuis Open-Meteo
-            fetchWindData();
+            document.getElementById('val-distance').textContent = totalDist.toFixed(1);
+            document.getElementById('val-ele-gain').textContent = Math.round(totalGain);
+            document.getElementById('val-ele-loss').textContent = Math.round(totalLoss);
+            
+            const totalDurationHrs = (checkpoints[checkpoints.length-1].estimatedTime - startTime) / 3600000;
+            const h = Math.floor(totalDurationHrs);
+            const m = Math.round((totalDurationHrs - h) * 60);
+            document.getElementById('val-duration').textContent = `${h}h${m < 10 ? '0' : ''}${m}`;
+
+            renderMap();
+            renderGrid(parseInt(document.getElementById('wind-slider').value));
+            renderChart();
+            renderTable();
         }
 
-        // 5. Calculs géographiques : Haversine & Bearing
+        async function fetchTrackAndGridWeather(baseDate) {
+            const bounds = L.latLngBounds(rawTrackData.map(p => [p.lat, p.lng]));
+            gridData = [];
+            const divisions = 5; 
+            const latStep = (bounds.getNorth() - bounds.getSouth()) / divisions;
+            const lngStep = (bounds.getEast() - bounds.getWest()) / divisions;
+            
+            let lats = [], lngs = [];
+            lats.push(bounds.getCenter().lat);
+            lngs.push(bounds.getCenter().lng);
+
+            for (let i = 0; i <= divisions; i++) {
+                for (let j = 0; j <= divisions; j++) {
+                    const lat = bounds.getSouth() + i * latStep;
+                    const lng = bounds.getWest() + j * lngStep;
+                    lats.push(lat);
+                    lngs.push(lng);
+                    gridData.push({ lat, lng, hourlyDirs: [], hourlySpeeds: [] });
+                }
+            }
+
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=${lats.join(',')}&longitude=${lngs.join(',')}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=kmh&forecast_days=3`;
+            
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                rawWeatherTimeSeries = data;
+                
+                const traceWeather = Array.isArray(data) ? data[0] : data; 
+                const startIso = baseDate.toISOString().slice(0,13) + ":00";
+                let startIndex = traceWeather.hourly.time.indexOf(startIso);
+                if (startIndex === -1) startIndex = 0;
+
+                window.meteoStartIndex = startIndex;
+
+                if (Array.isArray(data)) {
+                    for(let k = 1; k <= gridData.length; k++) {
+                        gridData[k-1].hourlyDirs = data[k].hourly.wind_direction_10m;
+                        gridData[k-1].hourlySpeeds = data[k].hourly.wind_speed_10m;
+                    }
+                } else {
+                    gridData.forEach(g => { 
+                        g.hourlyDirs = data.hourly.wind_direction_10m; 
+                        g.hourlySpeeds = data.hourly.wind_speed_10m;
+                    });
+                }
+            } catch (err) {
+                console.error("Erreur Météo :", err);
+            }
+        }
+
+        function getMeteoAtPointAndTime(lat, lng, startTime, targetTime) {
+            if (!rawWeatherTimeSeries) return { speed: 10, dir: 0 };
+            
+            const hoursDiff = Math.max(0, Math.floor((targetTime - startTime) / 3600000));
+            const targetHourIndex = (window.meteoStartIndex || 0) + hoursDiff;
+
+            let closestGrid = gridData[0];
+            let minDst = Infinity;
+            gridData.forEach(g => {
+                const d = Math.pow(g.lat - lat, 2) + Math.pow(g.lng - lng, 2);
+                if (d < minDst) { minDst = d; closestGrid = g; }
+            });
+
+            if (!closestGrid || !closestGrid.hourlySpeeds) {
+                const traceW = Array.isArray(rawWeatherTimeSeries) ? rawWeatherTimeSeries[0] : rawWeatherTimeSeries;
+                const idx = Math.min(targetHourIndex, traceW.hourly.wind_speed_10m.length - 1);
+                return {
+                    speed: traceW.hourly.wind_speed_10m[idx] || 10,
+                    dir: traceW.hourly.wind_direction_10m[idx] || 0
+                };
+            }
+
+            const safeIdx = Math.min(targetHourIndex, closestGrid.hourlySpeeds.length - 1);
+            return {
+                speed: closestGrid.hourlySpeeds[safeIdx] !== undefined ? closestGrid.hourlySpeeds[safeIdx] : 10,
+                dir: closestGrid.hourlyDirs[safeIdx] !== undefined ? closestGrid.hourlyDirs[safeIdx] : 0
+            };
+        }
+
+        function handleSliderChange(e) {
+            const offset = parseInt(e.target.value);
+            document.getElementById('slider-time-label').textContent = `+${offset}h`;
+            renderGrid(offset);
+        }
+
+        function renderGrid(hourOffset) {
+            windGridLayer.clearLayers();
+            if (!gridData || gridData.length === 0) return;
+
+            const targetIdx = (window.meteoStartIndex || 0) + hourOffset;
+
+            gridData.forEach(pt => {
+                const dir = pt.hourlyDirs[targetIdx] || 0;
+                const speed = pt.hourlySpeeds[targetIdx] || 0;
+                const windFlowAngle = (dir + 180) % 360;
+                
+                let color = speed > 30 ? '#ef4444' : (speed > 15 ? '#f59e0b' : '#38bdf8');
+                let scaleFactor = 0.7 + (speed / 30); 
+                if (scaleFactor > 1.8) scaleFactor = 1.8;
+
+                const svgIcon = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="cap"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>`;
+
+                const icon = L.divIcon({
+                    className: 'wind-grid-icon',
+                    html: `<div style="transform: rotate(${windFlowAngle}deg) scale(${scaleFactor});">${svgIcon}</div>`,
+                    iconSize: [28, 28],
+                    iconAnchor: [14, 14]
+                });
+                L.marker([pt.lat, pt.lng], { icon, interactive: false }).addTo(windGridLayer);
+            });
+        }
+
+        function renderMap() {
+            if (trackPolyline) map.removeLayer(trackPolyline);
+            if (startMarker) map.removeLayer(startMarker);
+            if (endMarker) map.removeLayer(endMarker);
+            courseArrowsLayer.clearLayers();
+
+            const latLngs = rawTrackData.map(p => [p.lat, p.lng]);
+            trackPolyline = L.polyline(latLngs, { color: '#38bdf8', weight: 4, opacity: 0.8 }).addTo(map);
+            
+            L.polylineDecorator(trackPolyline, {
+                patterns: [{ offset: '5%', repeat: '10%', symbol: L.Symbol.arrowHead({ pixelSize: 10, polygon: false, pathOptions: { stroke: true, color: '#ffffff', weight: 2 } }) }]
+            }).addTo(courseArrowsLayer);
+
+            map.fitBounds(trackPolyline.getBounds(), { padding: [30, 30] });
+
+            startMarker = L.marker(latLngs[0], { icon: createCustomMarker('#10b981', 'fa-play') }).addTo(map);
+            endMarker = L.marker(latLngs[latLngs.length-1], { icon: createCustomMarker('#ef4444', 'fa-flag-checkered') }).addTo(map);
+        }
+
+        function createCustomMarker(color, iconClass) {
+            return L.divIcon({
+                className: '',
+                html: `<div style="background-color:${color}; width:24px; height:24px; border-radius:50%; border:2px solid white; display:flex; align-items:center; justify-content:center; color:white; font-size:10px; box-shadow: 0 2px 4px rgba(0,0,0,0.5);"><i class="fa-solid ${iconClass}"></i></div>`,
+                iconSize: [24, 24], iconAnchor: [12, 12]
+            });
+        }
+
+        function renderChart() {
+            // Utilisation d'un format de données {x, y} natif pour l'axe linéaire
+            elevationChart.data.datasets[0].data = rawTrackData.map(p => ({ x: p.dist, y: p.ele }));
+            elevationChart.update();
+            updateProfileWeatherMarkers();
+        }
+
+        // Anti-superposition robuste des badges basée sur l'espace en pixels et le zoom
+        function updateProfileWeatherMarkers() {
+            const container = document.getElementById('profile-weather-markers');
+            container.innerHTML = '';
+            if (!elevationChart || checkpoints.length <= 1) return;
+
+            const xAxis = elevationChart.scales.x;
+            const yAxis = elevationChart.scales.y;
+            const minXPixel = xAxis.left;
+            const maxXPixel = xAxis.right;
+
+            // Collecter et positionner tous les checkpoints visibles dans la fenêtre de zoom actuelle
+            const visibleItems = [];
+            for (let i = 1; i < checkpoints.length; i++) {
+                const cp = checkpoints[i];
+                const xPixel = xAxis.getPixelForValue(cp.dist);
+                
+                if (xPixel >= minXPixel && xPixel <= maxXPixel) {
+                    const yPixel = yAxis.getPixelForValue(cp.ele);
+                    visibleItems.push({ cp, xPixel, yPixel });
+                }
+            }
+
+            // Trier de gauche à droite pour le test de collision
+            visibleItems.sort((a, b) => a.xPixel - b.xPixel);
+
+            // Ajustement dynamique de l'espace minimal requis entre deux badges selon la densité visible
+            let minSpacing = 75; 
+            if (visibleItems.length > 20) minSpacing = 60;
+            if (visibleItems.length > 40) minSpacing = 45;
+
+            let lastRenderedX = -9999;
+
+            visibleItems.forEach(item => {
+                // Si les badges sont trop proches, on masque le superflu pour éviter tout fouillis
+                if (item.xPixel - lastRenderedX < minSpacing && item !== visibleItems[visibleItems.length - 1]) {
+                    return; 
+                }
+                lastRenderedX = item.xPixel;
+
+                const windFlowAngle = (item.cp.windDir + 180) % 360;
+                const impactColorClass = item.cp.windImpact === 1 ? 'border-emerald-500/80 text-emerald-400' : (item.cp.windImpact === -1 ? 'border-rose-500/80 text-rose-400' : 'border-amber-500/80 text-amber-400');
+                
+                const badge = document.createElement('div');
+                badge.className = `absolute transform -translate-x-1/2 flex flex-col items-center pointer-events-none transition-all`;
+                badge.style.left = `${item.xPixel}px`;
+                badge.style.top = `${Math.max(10, item.yPixel - 42)}px`;
+
+                badge.innerHTML = `
+                    <div class="bg-slate-900/95 backdrop-blur border ${impactColorClass} rounded px-1.5 py-0.5 text-[10px] text-white flex items-center gap-1 shadow-lg whitespace-nowrap">
+                        <span class="font-bold text-slate-300">${item.cp.dist % 1 === 0 ? item.cp.dist : item.cp.dist.toFixed(1)}km</span>
+                        <span class="font-bold text-white">${item.cp.windSpeed}k</span>
+                        <div style="transform: rotate(${windFlowAngle}deg);" class="w-3 h-3 flex items-center justify-center">
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+                        </div>
+                    </div>
+                    <div class="w-0.5 h-3 bg-blue-400/80 shadow"></div>
+                `;
+                container.appendChild(badge);
+            });
+        }
+
+        function highlightPointOnMap(idx) {
+            const pt = rawTrackData[idx];
+            if (!pt) return;
+            removeHoverMarker();
+            hoverMarker = L.marker([pt.lat, pt.lng], {
+                icon: L.divIcon({ className: '', html: `<div class="hover-point"></div>`, iconSize: [14, 14], iconAnchor: [7, 7] }),
+                zIndexOffset: 1000
+            }).addTo(map);
+
+            if (pt.estimatedTime) {
+                const startTime = new Date(document.getElementById('start-time').value);
+                const hoursOffset = Math.max(0, Math.round((pt.estimatedTime - startTime) / 3600000));
+                renderGrid(hoursOffset);
+            }
+
+            let windHtml = pt.windSpeed ? `<span class="text-blue-400 border-l border-slate-600 pl-2 ml-2"><i class="fa-solid fa-wind"></i> ${pt.windSpeed} km/h (${pt.windImpact===1?'Dos':pt.windImpact===-1?'Face':'Lat.'})</span>` : '';
+            document.getElementById('hover-info').innerHTML = `Dist: <strong class="text-white">${pt.dist} km</strong> | Alt: <strong class="text-white">${Math.round(pt.ele)} m</strong> ${windHtml}`;
+            
+            if (pt.windSpeed !== undefined && pt.windDir !== undefined) {
+                const windInd = document.getElementById('chart-wind-indicator');
+                windInd.classList.remove('hidden');
+                windInd.classList.add('flex');
+                document.getElementById('chart-wind-speed').textContent = `${pt.windSpeed} km/h`;
+                
+                const windFlowAngle = (pt.windDir + 180) % 360;
+                document.getElementById('chart-wind-arrow').style.transform = `rotate(${windFlowAngle}deg)`;
+            }
+        }
+
+        function removeHoverMarker() {
+            if (hoverMarker) { map.removeLayer(hoverMarker); hoverMarker = null; }
+            document.getElementById('hover-info').textContent = "Survolez le graphique";
+            const windInd = document.getElementById('chart-wind-indicator');
+            windInd.classList.remove('flex');
+            windInd.classList.add('hidden');
+
+            const sliderVal = parseInt(document.getElementById('wind-slider').value);
+            renderGrid(sliderVal);
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('summary-table-body');
+            tbody.innerHTML = '';
+
+            for (let i = 1; i < checkpoints.length; i++) {
+                const cp = checkpoints[i];
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-700/40 transition-colors border-b border-slate-700/50 last:border-0";
+                
+                const timeStr = cp.estimatedTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                const impactIcon = cp.windImpact === 1 ? '<i class="fa-solid fa-arrow-down text-emerald-400" title="Favorable"></i>' : (cp.windImpact === -1 ? '<i class="fa-solid fa-arrow-up text-rose-500" title="Face"></i>' : '<i class="fa-solid fa-arrow-right text-amber-400" title="Latéral"></i>');
+                
+                const cumSign = cp.cumulativeDiffMins > 0 ? '+' : '';
+                const cumColor = cp.cumulativeDiffMins > 0 ? 'text-rose-400' : (cp.cumulativeDiffMins === 0 ? 'text-slate-300' : 'text-emerald-400');
+                
+                const secSign = cp.sectionDiffMins > 0 ? '+' : '';
+                const secColor = cp.sectionDiffMins > 0 ? 'text-rose-400' : (cp.sectionDiffMins === 0 ? 'text-slate-400' : 'text-emerald-400');
+
+                const diffHtml = `
+                    <div class="flex items-baseline gap-1.5">
+                        <span class="font-bold ${cumColor}">${cumSign}${cp.cumulativeDiffMins} min</span>
+                        <span class="text-[11px] ${secColor} font-normal">(${secSign}${cp.sectionDiffMins})</span>
+                    </div>
+                `;
+
+                tr.innerHTML = `
+                    <td class="p-2 font-medium text-white">${cp.dist % 1 === 0 ? cp.dist : cp.dist.toFixed(1)} km</td>
+                    <td class="p-2 text-slate-300">${timeStr}</td>
+                    <td class="p-2 text-emerald-400">+${Math.round(cp.segmentEleGain)} m</td>
+                    <td class="p-2 text-rose-400">-${Math.round(cp.segmentEleLoss)} m</td>
+                    <td class="p-2 text-slate-300">${cp.windSpeed} km/h</td>
+                    <td class="p-2 text-slate-300 flex items-center gap-2">${cp.windDir}° ${impactIcon}</td>
+                    <td class="p-2 font-medium text-white">${cp.adjustedSpeed} km/h</td>
+                    <td class="p-2">${diffHtml}</td>
+                `;
+                tbody.appendChild(tr);
+            }
+        }
+
         function haversineDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371; // Rayon Terre en km
+            const R = 6371;
             const dLat = (lat2 - lat1) * Math.PI / 180;
             const dLon = (lon2 - lon1) * Math.PI / 180;
-            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                      Math.sin(dLon / 2) * Math.sin(dLon / 2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            return R * c;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         }
 
         function calculateBearing(lat1, lon1, lat2, lon2) {
             const dLon = (lon2 - lon1) * Math.PI / 180;
-            const y = Math.sin(dLon) * Math.cos(lat2 * Math.PI / 180);
-            const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
-                      Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos(dLon);
-            const brng = Math.atan2(y, x) * 180 / Math.PI;
-            return (brng + 360) % 360;
-        }
-
-        // 6. Affichage de la Trace, Marqueurs de Départ, d'Arrivée et Flèches de Parcours
-        function renderTrackOnMap() {
-            // Nettoyage des anciennes couches
-            if (trackPolyline) map.removeLayer(trackPolyline);
-            if (startMarker) map.removeLayer(startMarker);
-            if (endMarker) map.removeLayer(endMarker);
-            windMarkersLayer.clearLayers();
-            courseArrowsLayer.clearLayers();
-
-            const latLngs = trackData.map(p => [p.lat, p.lng]);
-
-            // Trace principale
-            trackPolyline = L.polyline(latLngs, {
-                color: '#38bdf8',
-                weight: 4,
-                opacity: 0.9,
-                lineJoin: 'round'
-            }).addTo(map);
-
-            map.fitBounds(trackPolyline.getBounds(), { padding: [40, 40] });
-
-            // Marqueur de Départ (Vert)
-            const startPt = trackData[0];
-            const startIcon = L.divIcon({
-                className: 'custom-start-marker',
-                html: `<div style="background-color:#10b981; width:28px; height:28px; border-radius:50%; border:3px solid white; display:flex; align-items:center; justify-content:center; color:white; font-size:12px; box-shadow: 0 4px 6px rgba(0,0,0,0.4);"><i class="fa-solid fa-play"></i></div>`,
-                iconSize: [28, 28],
-                iconAnchor: [14, 14]
-            });
-            startMarker = L.marker([startPt.lat, startPt.lng], { icon: startIcon })
-                .bindPopup(`<b>Départ</b><br>Altitude: ${startPt.ele}m`)
-                .addTo(map);
-
-            // Marqueur d'Arrivée (Rouge)
-            const endPt = trackData[trackData.length - 1];
-            const endIcon = L.divIcon({
-                className: 'custom-end-marker',
-                html: `<div style="background-color:#ef4444; width:28px; height:28px; border-radius:50%; border:3px solid white; display:flex; align-items:center; justify-content:center; color:white; font-size:12px; box-shadow: 0 4px 6px rgba(0,0,0,0.4);"><i class="fa-solid fa-flag-checkered"></i></div>`,
-                iconSize: [28, 28],
-                iconAnchor: [14, 14]
-            });
-            endMarker = L.marker([endPt.lat, endPt.lng], { icon: endIcon })
-                .bindPopup(`<b>Arrivée</b><br>Distance: ${endPt.dist} km<br>Altitude: ${endPt.ele}m`)
-                .addTo(map);
-
-            // Ajout des flèches de sens de parcours le long de la ligne
-            addCourseDirectionArrows();
-        }
-
-        // Flèches indiquant la direction du parcours
-        function addCourseDirectionArrows() {
-            const step = Math.max(1, Math.floor(trackData.length / 15)); // ~15 flèches régulièrement espacées
-            
-            for (let i = step; i < trackData.length - 1; i += step) {
-                const pt = trackData[i];
-                const arrowIcon = L.divIcon({
-                    className: 'course-arrow-icon',
-                    html: `<div style="transform: rotate(${pt.bearing}deg); color: #ffffff; opacity: 0.8; font-size: 14px; text-shadow: 0 0 3px rgba(0,0,0,0.8);">
-                            <i class="fa-solid fa-chevron-up"></i>
-                           </div>`,
-                    iconSize: [16, 16],
-                    iconAnchor: [8, 8]
-                });
-                L.marker([pt.lat, pt.lng], { icon: arrowIcon, interactive: false }).addTo(courseArrowsLayer);
-            }
-        }
-
-        // 7. Requête de l'API Open-Meteo pour récupérer le vent
-        async function fetchWindData() {
-            if (trackData.length === 0) return;
-
-            const centerLat = trackData[Math.floor(trackData.length / 2)].lat;
-            const centerLng = trackData[Math.floor(trackData.length / 2)].lng;
-            
-            // Date de référence : date du GPX ou aujourd'hui
-            let dateStr = new Date().toISOString().split('T')[0];
-            if (trackData[0].time) {
-                dateStr = trackData[0].time.toISOString().split('T')[0];
-            }
-
-            const url = `https://api.open-meteo.com/v1/forecast?latitude=${centerLat}&longitude=${centerLng}&hourly=wind_speed_10m,wind_direction_10m,temperature_2m&wind_speed_unit=kmh&forecast_days=1`;
-
-            try {
-                const response = await fetch(url);
-                const data = await response.json();
-
-                if (data && data.hourly) {
-                    processWindData(data.hourly);
-                }
-            } catch (err) {
-                console.error("Erreur lors de la récupération météo Open-Meteo :", err);
-            }
-        }
-
-        // Processing et association du vent à chaque segment
-        function processWindData(hourly) {
-            const avgWindSpeed = Math.round(hourly.wind_speed_10m.reduce((a, b) => a + b, 0) / hourly.wind_speed_10m.length);
-            const avgWindDir = Math.round(hourly.wind_direction_10m.reduce((a, b) => a + b, 0) / hourly.wind_direction_10m.length);
-            const avgTemp = Math.round(hourly.temperature_2m.reduce((a, b) => a + b, 0) / hourly.temperature_2m.length);
-
-            let headwindCount = 0;
-            let crosswindCount = 0;
-            let tailwindCount = 0;
-
-            trackData.forEach(pt => {
-                pt.windSpeed = avgWindSpeed;
-                pt.windDir = avgWindDir;
-
-                // Angle relatif entre le vent (d'où il vient) et la direction du cycliste/coureur
-                // Le vent "vient de" windDir, donc le flux va vers (windDir + 180) % 360
-                const windTo = (avgWindDir + 180) % 360;
-                let angleDiff = Math.abs(pt.bearing - windTo);
-                if (angleDiff > 180) angleDiff = 360 - angleDiff;
-
-                // Classification impact vent
-                if (angleDiff < 45) {
-                    pt.windImpact = 1; // Vent très favorable (dans le dos)
-                    tailwindCount++;
-                } else if (angleDiff > 135) {
-                    pt.windImpact = -1; // Vent défavorable (de face)
-                    headwindCount++;
-                } else {
-                    pt.windImpact = 0; // Vent latéral
-                    crosswindCount++;
-                }
-            });
-
-            // Mise à jour de la synthèse textuelle
-            document.getElementById('val-wind-speed').textContent = avgWindSpeed;
-            document.getElementById('val-wind-dir').textContent = `${avgWindDir}° (${getCompassDirection(avgWindDir)})`;
-            document.getElementById('val-temp').textContent = avgTemp;
-
-            const total = trackData.length;
-            const pctHead = Math.round((headwindCount / total) * 100);
-            const pctCross = Math.round((crosswindCount / total) * 100);
-            const pctTail = Math.round((tailwindCount / total) * 100);
-
-            document.getElementById('pct-headwind').textContent = `${pctHead}%`;
-            document.getElementById('pct-tailwind').textContent = `${pctTail}%`;
-
-            document.getElementById('bar-headwind').style.width = `${pctHead}%`;
-            document.getElementById('bar-crosswind').style.width = `${pctCross}%`;
-            document.getElementById('bar-tailwind').style.width = `${pctTail}%`;
-
-            // Affichage des flèches de vent sur la carte
-            renderWindArrowsOnMap();
-        }
-
-        // Orientation du vent en rose des vents
-        function getCompassDirection(deg) {
-            const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
-            return dirs[Math.round(deg / 45) % 8];
-        }
-
-        // Affichage des flèches de vent orientées et colorées le long du parcours
-        function renderWindArrowsOnMap() {
-            windMarkersLayer.clearLayers();
-
-            const step = Math.max(1, Math.floor(trackData.length / 12)); // ~12 flèches de vent
-
-            for (let i = Math.floor(step / 2); i < trackData.length; i += step) {
-                const pt = trackData[i];
-                
-                // Couleur basée sur l'impact du vent
-                let color = '#f59e0b'; // Vent de côté (Ambre)
-                if (pt.windImpact === 1) color = '#10b981'; // Vent favorable (Vert)
-                if (pt.windImpact === -1) color = '#ef4444'; // Vent de face (Rouge)
-
-                // La flèche pointe dans la direction OÙ VA LE VENT (windDir + 180)
-                const windVectorAngle = (pt.windDir + 180) % 360;
-
-                const windIcon = L.divIcon({
-                    className: 'wind-arrow-icon',
-                    html: `<div style="transform: rotate(${windVectorAngle}deg); background-color: rgba(15, 23, 42, 0.85); width: 28px; height: 28px; border-radius: 50%; border: 2px solid ${color}; display: flex; align-items: center; justify-content: center; color: ${color}; font-size: 14px; box-shadow: 0 2px 5px rgba(0,0,0,0.5);">
-                            <i class="fa-solid fa-arrow-up"></i>
-                           </div>`,
-                    iconSize: [28, 28],
-                    iconAnchor: [14, 14]
-                });
-
-                L.marker([pt.lat, pt.lng], { icon: windIcon })
-                    .bindPopup(`<b>Vent à ce point :</b><br>
-                                Vitesse: ${pt.windSpeed} km/h<br>
-                                Direction: ${pt.windDir}° (${getCompassDirection(pt.windDir)})<br>
-                                Impact: ${pt.windImpact === 1 ? 'Favorable' : (pt.windImpact === -1 ? 'Vent de face' : 'Vent latéral')}`)
-                    .addTo(windMarkersLayer);
-            }
-        }
-
-        // 8. Mise à jour du graphique Chart.js
-        function updateChart() {
-            const labels = trackData.map(p => p.dist);
-            const eleData = trackData.map(p => p.ele);
-
-            elevationChart.data.labels = labels;
-            elevationChart.data.datasets[0].data = eleData;
-            elevationChart.update();
-        }
-
-        // 9. Synchronisation du survol (Graphique -> Carte)
-        function highlightPointOnMap(index) {
-            const pt = trackData[index];
-            if (!pt) return;
-
-            removeHoverMarker();
-
-            const hoverIcon = L.divIcon({
-                className: 'hover-marker',
-                html: `<div class="hover-point"></div>`,
-                iconSize: [14, 14],
-                iconAnchor: [7, 7]
-            });
-
-            hoverMarker = L.marker([pt.lat, pt.lng], { icon: hoverIcon, zIndexOffset: 1000 }).addTo(map);
-
-            // Mise à jour du texte d'information au survol
-            document.getElementById('hover-info').innerHTML = 
-                `<strong>${pt.dist} km</strong> | Alt: <strong>${pt.ele} m</strong> ${pt.windSpeed ? `| Vent: <strong>${pt.windSpeed} km/h</strong>` : ''}`;
-        }
-
-        function removeHoverMarker() {
-            if (hoverMarker) {
-                map.removeLayer(hoverMarker);
-                hoverMarker = null;
-            }
-            document.getElementById('hover-info').textContent = "Survolez le graphique pour explorer la trace";
-        }
-
-        // 10. Mise à jour des cartes de résumé
-        function updateStatsSummary(distance, gain, loss) {
-            document.getElementById('status-card').classList.add('hidden');
-            document.getElementById('stats-container').classList.remove('hidden');
-
-            document.getElementById('val-distance').textContent = distance.toFixed(1);
-            document.getElementById('val-ele-gain').textContent = Math.round(gain);
-            document.getElementById('val-ele-loss').textContent = Math.round(loss);
-
-            // Estimation de durée simple (vitesse moyenne arbitraire ~22 km/h pour du vélo)
-            const hours = distance / 22;
-            const h = Math.floor(hours);
-            const m = Math.round((hours - h) * 60);
-            document.getElementById('val-duration').textContent = `${h}h${m < 10 ? '0' : ''}${m}`;
+            const y = Math.sin(dLon) * Math.cos(lat2*Math.PI/180);
+            const x = Math.cos(lat1*Math.PI/180) * Math.sin(lat2*Math.PI/180) - Math.sin(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.cos(dLon);
+            return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
         }
     </script>
 </body>
